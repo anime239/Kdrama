@@ -48,7 +48,7 @@ class OnlyKdrama : MainAPI() {
             image?.attr("src"),
             element.attr("data-bg")
         ).firstOrNull {
-            it.isNotBlank() && !it.startsWith("data:")
+            !it.isNullOrBlank() && !it.startsWith("data:")
         } ?: return null
 
         return absoluteUrl(poster)
@@ -169,9 +169,10 @@ class OnlyKdrama : MainAPI() {
             document.selectFirst("img")
         )
 
-        return newTvSeriesLoadResponse(
+        return newMovieLoadResponse(
             title,
             url,
+            TvType.Movie,
             url
         ) {
             posterUrl = poster?.let { absoluteUrl(it) }
