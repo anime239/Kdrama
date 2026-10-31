@@ -1,4 +1,3 @@
-
 package com.onlykdrama
 
 import com.lagradost.cloudstream3.*
@@ -22,11 +21,9 @@ class OnlyKdrama : MainAPI() {
         TvType.TvSeries
     )
 
-    private val headers = mapOf(
-        "User-Agent" to
-            "Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Mobile Safari/537.36",
-        "Accept" to
-            "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    private val requestHeaders = mapOf(
+        "User-Agent" to "Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Mobile Safari/537.36",
+        "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Accept-Language" to "en-US,en;q=0.9",
         "Referer" to "$mainUrl/"
     )
@@ -35,51 +32,52 @@ class OnlyKdrama : MainAPI() {
         "" to "New Release"
     )
 
-    private fun absoluteUrl(url: String): String {
-        return fixUrl(
-            url.trim()
-                .replace("\\/", "/")
-                .replace("&amp;", "&")
-        )
+    private fun absoluteUrl(value: String): String {
+        val cleaned = value.trim()
+            .replace("\\/", "/")
+            .replace("&amp;", "&")
+
+        return fixUrl(cleaned)
     }
 
-    private fun isCloudflareChallenge(html: String): Boolean {
-        val page = html.lowercase()
+    private fun isChallenge(html: String): Boolean {
+        val content = html.lowercase()
 
-        return page.contains("cf-chl-") ||
-            page.contains("challenge-platform") ||
-            page.contains("performing security verification") ||
-            page.contains("just a moment...") ||
-            page.contains("cf-browser-verification")
+        return content.contains("cf-chl-") ||
+            content.contains("challenge-platform") ||
+            content.contains("cf-browser-verification") ||
+            content.contains("performing security verification") ||
+            content.contains("just a moment...")
     }
 
-    private fun getPoster(element: Element): String? {
-        val image = element.selectFirst(".poster img") ?: return null
+    private fun imageUrl(card: Element): String? {
+        val image = card.selectFirst(".poster img") ?: return null
 
-        val attributes = listOf(
-            "data-src",
-            "data-lazy-src",
-            "data-original",
-            "data-echo",
-            "src",
-            "srcset"
+        val candidates = listOf(
+            image.attr("data-src"),
+            image.attr("data-lazy-src"),
+            image.attr("data-original"),
+            image.attr("data-echo"),
+            image.attr("data-lazy"),
+            image.attr("src"),
+            image.attr("srcset")
         )
 
-        for (attribute in attributes) {
-            val value = image.attr(attribute).trim()
-
-            if (value.isBlank() || value.startsWith("data:")) {
+        for (candidate in candidates) {
+            if (candidate.isBlank() || candidate.startsWith("data:")) {
                 continue
             }
 
-            val imageUrl = if (attribute == "srcset") {
-                value.substringBefore(",").trim().substringBefore(" ")
+            val selected = if (candidate.contains(",")) {
+                candidate.substringBefore(",")
+                    .trim()
+                    .substringBefore(" ")
             } else {
-                value
+                candidate.trim()
             }
 
-            if (imageUrl.isNotBlank()) {
-                return absoluteUrl(imageUrl)
+            if (selected.isNotBlank() && !selected.startsWith("data:")) {
+                return absoluteUrl(selected)
             }
         }
 
@@ -91,6 +89,7 @@ class OnlyKdrama : MainAPI() {
         val seen = mutableSetOf<String>()
 
         for (card in document.select("article.item")) {
+
             val link = card.selectFirst(".data h3 a[href]")
                 ?: card.selectFirst(".poster a[href]")
                 ?: continue
@@ -100,14 +99,11 @@ class OnlyKdrama : MainAPI() {
 
             val url = absoluteUrl(href)
 
-            if (!url.startsWith("$mainUrl/") || !seen.add(url)) {
-                continue
-            }
+            if (!url.startsWith("$mainUrl/")) continue
+            if (!seen.add(url)) continue
 
             val title = link.text().trim()
-                .ifBlank {
-                    link.attr("aria-label").trim()
-                }
+                .ifBlank { link.attr("aria-label").trim() }
                 .ifBlank {
                     card.selectFirst(".poster img")
                         ?.attr("alt")
@@ -117,7 +113,7 @@ class OnlyKdrama : MainAPI() {
 
             if (title.isBlank()) continue
 
-            val poster = getPoster(card)
+            val poster = imageUrl(card)
 
             results.add(
                 newTvSeriesSearchResponse(
@@ -136,15 +132,15 @@ class OnlyKdrama : MainAPI() {
     private suspend fun fetchDocument(url: String): Document {
         val response = app.get(
             url,
-            headers = headers
+            headers = requestHeaders
         )
 
         val html = response.text
 
-        if (isCloudflareChallenge(html)) {
+        if (isChallenge(html)) {
             throw ErrorLoadingException(
-                "OnlyKDrama: Cloudflare verification blocked the HTTP request. " +
-                    "The website browser and CloudStream HTTP client use separate sessions."
+                "OnlyKDrama: The website returned a Cloudflare verification page. " +
+                    "The browser session is separate from CloudStream's HTTP session."
             )
         }
 
@@ -152,7 +148,8 @@ class OnlyKdrama : MainAPI() {
 
         if (document.select("article.item").isEmpty()) {
             throw ErrorLoadingException(
-                "OnlyKDrama: No drama cards were found in the HTTP response."
+                "OnlyKDrama: No drama cards were returned. " +
+                    "The website may have changed its response or blocked this request."
             )
         }
 
@@ -161,27 +158,34 @@ class OnlyKdrama : MainAPI() {
 
     private fun hasNextPage(
         document: Document,
-        currentPage: Int,
-        parameter: String
+        page: Int,
+        search: Boolean
     ): Boolean {
-        return document.select("a[href]").any { link ->
-            val href = link.attr("href")
+        val selector = if (search) {
+            "a[href*='paged=']"
+        } else {
+            "a[href*='/page/']"
+        }
 
-            val nextPage = when (parameter) {
-                "page" -> Regex("""/page/(\d+)/?""")
+        return document.select(selector).any { element ->
+
+            val href = element.attr("href")
+
+            val next = if (search) {
+                Regex("""[?&]paged=(\d+)""")
                     .find(href)
                     ?.groupValues
                     ?.getOrNull(1)
                     ?.toIntOrNull()
-
-                else -> Regex("""[?&]paged=(\d+)""")
+            } else {
+                Regex("""/page/(\d+)/?""")
                     .find(href)
                     ?.groupValues
                     ?.getOrNull(1)
                     ?.toIntOrNull()
             }
 
-            nextPage != null && nextPage > currentPage
+            next != null && next > page
         }
     }
 
@@ -189,6 +193,7 @@ class OnlyKdrama : MainAPI() {
         page: Int,
         request: MainPageRequest
     ): HomePageResponse {
+
         val pageNumber = page.coerceAtLeast(1)
 
         val url = if (pageNumber == 1) {
@@ -199,16 +204,18 @@ class OnlyKdrama : MainAPI() {
 
         val document = fetchDocument(url)
 
+        val results = parseVideos(document)
+
         return newHomePageResponse(
             HomePageList(
                 name = request.name,
-                list = parseVideos(document),
+                list = results,
                 isHorizontalImages = true
             ),
             hasNext = hasNextPage(
                 document,
                 pageNumber,
-                "page"
+                false
             )
         )
     }
@@ -217,16 +224,17 @@ class OnlyKdrama : MainAPI() {
         query: String,
         page: Int
     ): Pair<List<SearchResponse>, Boolean> {
-        val encodedQuery = URLEncoder.encode(
+
+        val pageNumber = page.coerceAtLeast(1)
+
+        val encoded = URLEncoder.encode(
             query.trim(),
             "UTF-8"
         )
 
-        val pageNumber = page.coerceAtLeast(1)
-
         val url = buildString {
             append("$mainUrl/advance-search/")
-            append("?q=$encodedQuery")
+            append("?q=$encoded")
             append("&type=all")
             append("&lang=")
             append("&genre=")
@@ -243,11 +251,7 @@ class OnlyKdrama : MainAPI() {
 
         return Pair(
             parseVideos(document),
-            hasNextPage(
-                document,
-                pageNumber,
-                "paged"
-            )
+            hasNextPage(document, pageNumber, true)
         )
     }
 
@@ -261,6 +265,7 @@ class OnlyKdrama : MainAPI() {
         query: String,
         page: Int
     ): SearchResponseList? {
+
         val (results, hasNext) = searchPage(query, page)
 
         return newSearchResponseList(
