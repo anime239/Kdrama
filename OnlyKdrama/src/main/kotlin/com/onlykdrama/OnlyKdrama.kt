@@ -4,6 +4,7 @@ package com.onlykdrama
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import org.jsoup.nodes.Document
+import org.jsoup.nodes.Element
 import java.net.URLEncoder
 
 class OnlyKdrama : MainAPI() {
@@ -25,12 +26,14 @@ class OnlyKdrama : MainAPI() {
         "User-Agent" to "Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Mobile Safari/537.36",
         "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Accept-Language" to "en-US,en;q=0.9",
-        "Referer" to "https://onlykdrama.shop/"
+        "Referer" to "$mainUrl/"
     )
 
     override val mainPage = mainPageOf(
         "" to "New Release"
     )
+
+    // ---------------- URL HANDLING ----------------
 
     private fun absoluteUrl(url: String): String {
         return fixUrl(
@@ -40,6 +43,12 @@ class OnlyKdrama : MainAPI() {
         )
     }
 
+    private fun isValidDramaUrl(url: String): Boolean {
+        return url.startsWith("$mainUrl/")
+    }
+
+    // ---------------- CLOUDFLARE DETECTION ----------------
+
     private fun isCloudflareChallenge(html: String): Boolean {
         val page = html.lowercase()
 
@@ -47,40 +56,126 @@ class OnlyKdrama : MainAPI() {
             page.contains("challenge-platform") ||
             page.contains("performing security verification") ||
             page.contains("just a moment...") ||
-            page.contains("cf-browser-verification")
+            page.contains("cf-browser-verification") ||
+            page.contains("checking your browser") ||
+            page.contains("verify you are human")
     }
+
+    private suspend fun fetchDocument(url: String): Document {
+
+        val response = app.get(
+            url,
+            headers = headers
+        )
+
+        val html = response.text
+
+        if (isCloudflareChallenge(html)) {
+            throw ErrorLoadingException(
+                "OnlyKDrama is showing a security verification page. " +
+                    "Open OnlyKDrama from plugin settings, complete the verification, " +
+                    "then retry the request."
+            )
+        }
+
+        return response.document
+    }
+
+    // ---------------- POSTER EXTRACTION ----------------
+
+    private fun getPoster(card: Element): String? {
+
+        val image = card.selectFirst(".poster img")
+            ?: card.selectFirst("img")
+
+        if (image == null) return null
+
+        val possibleSources = listOf(
+            image.attr("data-src"),
+            image.attr("data-lazy-src"),
+            image.attr("data-original"),
+            image.attr("data-echo"),
+            image.attr("src")
+        )
+
+        for (source in possibleSources) {
+            val value = source.trim()
+
+            if (
+                value.isNotBlank() &&
+                !value.startsWith("data:") &&
+                !value.startsWith("blob:")
+            ) {
+                return absoluteUrl(value)
+            }
+        }
+
+        val srcSet = image.attr("srcset")
+
+        if (srcSet.isNotBlank()) {
+            val firstImage = srcSet
+                .split(",")
+                .firstOrNull()
+                ?.trim()
+                ?.substringBefore(" ")
+                ?.trim()
+
+            if (
+                !firstImage.isNullOrBlank() &&
+                !firstImage.startsWith("data:")
+            ) {
+                return absoluteUrl(firstImage)
+            }
+        }
+
+        return null
+    }
+
+    // ---------------- DRAMA PARSING ----------------
 
     private fun parseVideos(
         document: Document
     ): List<SearchResponse> {
+
         val results = mutableListOf<SearchResponse>()
         val seen = mutableSetOf<String>()
 
-        for (card in document.select("article.item")) {
-            val link = card.selectFirst(".data h3 a[href]")
-                ?: card.selectFirst(".poster a[href]")
-                ?: continue
+        val cards = document.select(
+            "article.item, .items article.item"
+        )
+
+        for (card in cards) {
+
+            val link = card.selectFirst(
+                ".data h3 a[href]"
+            ) ?: card.selectFirst(
+                ".poster a[href]"
+            ) ?: continue
 
             val href = link.attr("href").trim()
+
             if (href.isBlank()) continue
 
             val url = absoluteUrl(href)
 
-            if (!url.startsWith("$mainUrl/") || !seen.add(url)) {
-                continue
-            }
+            if (!isValidDramaUrl(url)) continue
+
+            if (!seen.add(url)) continue
 
             val title = link.text().trim()
-                .ifBlank { link.attr("aria-label").trim() }
+                .ifBlank {
+                    link.attr("aria-label").trim()
+                }
+                .ifBlank {
+                    card.selectFirst(".poster img")
+                        ?.attr("alt")
+                        ?.trim()
+                        .orEmpty()
+                }
 
             if (title.isBlank()) continue
 
-            val poster = card.selectFirst(".poster img")
-                ?.attr("src")
-                ?.takeIf {
-                    it.isNotBlank() && !it.startsWith("data:")
-                }
-                ?.let { absoluteUrl(it) }
+            val poster = getPoster(card)
 
             results.add(
                 newTvSeriesSearchResponse(
@@ -96,32 +191,45 @@ class OnlyKdrama : MainAPI() {
         return results
     }
 
-    private suspend fun fetchDocument(url: String): Document {
-        val response = app.get(url, headers = headers)
-        val html = response.text
+    // ---------------- PAGINATION ----------------
 
-        if (isCloudflareChallenge(html)) {
-            throw ErrorLoadingException(
-                "OnlyKDrama requires website verification. " +
-                    "Open the browser from plugin settings and retry."
-            )
+    private fun hasNextPage(
+        document: Document,
+        currentPage: Int,
+        searchMode: Boolean
+    ): Boolean {
+
+        val pattern = if (searchMode) {
+            Regex("""[?&]paged=(\d+)""")
+        } else {
+            Regex("""/page/(\d+)/?""")
         }
 
-        val document = response.document
+        for (link in document.select("a[href]")) {
 
-        if (document.select("article.item").isEmpty()) {
-            throw ErrorLoadingException(
-                "OnlyKDrama returned no drama cards."
-            )
+            val href = link.attr("href")
+
+            val nextPage = pattern
+                .find(href)
+                ?.groupValues
+                ?.getOrNull(1)
+                ?.toIntOrNull()
+
+            if (nextPage != null && nextPage > currentPage) {
+                return true
+            }
         }
 
-        return document
+        return false
     }
+
+    // ---------------- HOMEPAGE ----------------
 
     override suspend fun getMainPage(
         page: Int,
         request: MainPageRequest
     ): HomePageResponse {
+
         val pageNumber = page.coerceAtLeast(1)
 
         val url = if (pageNumber == 1) {
@@ -132,55 +240,69 @@ class OnlyKdrama : MainAPI() {
 
         val document = fetchDocument(url)
 
-        val hasNext = document.select("a[href*='/page/']").any {
-            val nextPage = Regex("""/page/(\d+)/?""")
-                .find(it.attr("href"))
-                ?.groupValues
-                ?.getOrNull(1)
-                ?.toIntOrNull()
+        val results = parseVideos(document)
 
-            nextPage != null && nextPage > pageNumber
-        }
+        val hasNext = hasNextPage(
+            document,
+            pageNumber,
+            searchMode = false
+        )
 
         return newHomePageResponse(
             HomePageList(
                 name = request.name,
-                list = parseVideos(document),
+                list = results,
                 isHorizontalImages = true
             ),
             hasNext = hasNext
         )
     }
 
+    // ---------------- SEARCH ----------------
+
     private suspend fun searchPage(
         query: String,
         page: Int
     ): Pair<List<SearchResponse>, Boolean> {
-        val encodedQuery = URLEncoder.encode(query.trim(), "UTF-8")
+
+        val cleanQuery = query.trim()
+
+        if (cleanQuery.isBlank()) {
+            return Pair(emptyList(), false)
+        }
+
+        val encodedQuery = URLEncoder.encode(
+            cleanQuery,
+            "UTF-8"
+        )
+
         val pageNumber = page.coerceAtLeast(1)
 
         val url =
             "$mainUrl/advance-search/?q=$encodedQuery&type=all&lang=&genre=&year=&min_rating=0&sort=latest" +
-                if (pageNumber > 1) "&paged=$pageNumber" else ""
+                if (pageNumber > 1) {
+                    "&paged=$pageNumber"
+                } else {
+                    ""
+                }
 
         val document = fetchDocument(url)
 
-        val hasNext = document.select("a[href*='paged=']").any {
-            val nextPage = Regex("""paged=(\d+)""")
-                .find(it.attr("href"))
-                ?.groupValues
-                ?.getOrNull(1)
-                ?.toIntOrNull()
+        val results = parseVideos(document)
 
-            nextPage != null && nextPage > pageNumber
-        }
+        val hasNext = hasNextPage(
+            document,
+            pageNumber,
+            searchMode = true
+        )
 
-        return Pair(parseVideos(document), hasNext)
+        return Pair(results, hasNext)
     }
 
     override suspend fun search(
         query: String
     ): List<SearchResponse> {
+
         return searchPage(query, 1).first
     }
 
@@ -188,7 +310,11 @@ class OnlyKdrama : MainAPI() {
         query: String,
         page: Int
     ): SearchResponseList? {
-        val (results, hasNext) = searchPage(query, page)
+
+        val (results, hasNext) = searchPage(
+            query,
+            page
+        )
 
         return newSearchResponseList(
             results,
@@ -199,6 +325,7 @@ class OnlyKdrama : MainAPI() {
     override suspend fun quickSearch(
         query: String
     ): List<SearchResponse> {
+
         return searchPage(query, 1).first
     }
 }
