@@ -121,6 +121,20 @@ object OnlyKdramaWebView {
             displayZoomControls = false
         }
 
+        fun refreshWebView() {
+            webView.post {
+                webView.requestLayout()
+                webView.invalidate()
+                webView.postInvalidateOnAnimation()
+
+                webView.evaluateJavascript(
+                    "window.dispatchEvent(new Event('resize'));",
+                    null
+                )
+            }
+        }
+
+        
         webView.webChromeClient = object : WebChromeClient() {
 
             override fun onProgressChanged(
@@ -209,18 +223,7 @@ object OnlyKdramaWebView {
             }
         }
 
-        fun refreshWebView() {
-            webView.post {
-                webView.requestLayout()
-                webView.invalidate()
-                webView.postInvalidateOnAnimation()
-
-                webView.evaluateJavascript(
-                    "window.dispatchEvent(new Event('resize'));",
-                    null
-                )
-            }
-        }
+        
 
         val controls = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
