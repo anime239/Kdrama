@@ -2,10 +2,8 @@
 package com.onlykdrama
 
 import android.content.Context
-import android.content.Intent
-import android.net.Uri
-import android.app.AlertDialog
 import android.widget.Toast
+import android.app.AlertDialog
 import com.lagradost.cloudstream3.plugins.CloudstreamPlugin
 import com.lagradost.cloudstream3.plugins.Plugin
 
@@ -17,25 +15,18 @@ class OnlyKdramaPlugin : Plugin() {
 
         openSettings = { ctx ->
             AlertDialog.Builder(ctx)
-                .setTitle("OnlyKDrama")
+                .setTitle("OnlyKDrama Settings")
                 .setMessage(
-                    "Open OnlyKDrama in your browser to complete " +
-                    "any required website verification."
+                    "Open the in-app browser to visit OnlyKDrama " +
+                    "and maintain its browser session."
                 )
-                .setPositiveButton("Open Website") { _, _ ->
+                .setPositiveButton("Open Browser") { _, _ ->
                     try {
-                        val intent = Intent(
-                            Intent.ACTION_VIEW,
-                            Uri.parse("https://onlykdrama.shop/")
-                        ).apply {
-                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                        }
-
-                        ctx.startActivity(intent)
+                        OnlyKdramaWebView.open(ctx)
                     } catch (e: Exception) {
                         Toast.makeText(
                             ctx,
-                            "Unable to open browser",
+                            "Unable to open browser: ${e.message}",
                             Toast.LENGTH_LONG
                         ).show()
                     }
