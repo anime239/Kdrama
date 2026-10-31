@@ -66,17 +66,24 @@ object OnlyKdramaWebView {
         cookieManager.setAcceptCookie(true)
 
         val density = context.resources.displayMetrics.density
+        fun dp(value: Int) = (value * density).toInt()
 
-        fun dp(value: Int): Int =
-            (value * density).toInt()
+        val header = TextView(context).apply {
+            text = "OnlyKDrama · Cloudflare Verification"
+            textSize = 19f
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(16), 0, dp(12), 0)
+            setBackgroundColor(Color.rgb(45, 45, 45))
+        }
 
         val status = TextView(context).apply {
             text = "Opening OnlyKDrama..."
-            textSize = 13f
+            textSize = 14f
             setTextColor(Color.WHITE)
-            setPadding(dp(12), dp(10), dp(12), dp(10))
-            setBackgroundColor(Color.rgb(45, 45, 45))
             gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(12), dp(8), dp(12), dp(8))
+            setBackgroundColor(Color.rgb(65, 65, 65))
         }
 
         val progress = ProgressBar(
@@ -85,12 +92,11 @@ object OnlyKdramaWebView {
             android.R.attr.progressBarStyleHorizontal
         ).apply {
             max = 100
-            progress = 0
-            visibility = View.VISIBLE
         }
 
         val webView = WebView(context).apply {
-            setBackgroundColor(Color.WHITE)
+            setBackgroundColor(Color.BLACK)
+            setLayerType(View.LAYER_TYPE_HARDWARE, null)
             overScrollMode = View.OVER_SCROLL_NEVER
         }
 
@@ -100,24 +106,17 @@ object OnlyKdramaWebView {
             javaScriptEnabled = true
             domStorageEnabled = true
             databaseEnabled = true
-
             loadsImagesAutomatically = true
             blockNetworkImage = false
-
             useWideViewPort = true
             loadWithOverviewMode = true
-
             javaScriptCanOpenWindowsAutomatically = true
             setSupportMultipleWindows(false)
-
             mixedContentMode =
                 WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
-
             cacheMode = WebSettings.LOAD_DEFAULT
-
             allowFileAccess = false
             allowContentAccess = true
-
             builtInZoomControls = true
             displayZoomControls = false
         }
@@ -129,7 +128,6 @@ object OnlyKdramaWebView {
                 newProgress: Int
             ) {
                 progress.progress = newProgress
-
                 progress.visibility =
                     if (newProgress >= 100) View.GONE
                     else View.VISIBLE
@@ -167,6 +165,8 @@ object OnlyKdramaWebView {
                 cookieManager.flush()
                 progress.visibility = View.GONE
                 status.text = "Complete any website verification shown below."
+
+                refreshWebView()
             }
 
             override fun onReceivedError(
@@ -205,9 +205,20 @@ object OnlyKdramaWebView {
                 request: WebResourceRequest?
             ): Boolean {
                 val uri: Uri = request?.url ?: return false
+                return uri.scheme != "https" && uri.scheme != "http"
+            }
+        }
 
-                return uri.scheme != "https" &&
-                    uri.scheme != "http"
+        fun refreshWebView() {
+            webView.post {
+                webView.requestLayout()
+                webView.invalidate()
+                webView.postInvalidateOnAnimation()
+
+                webView.evaluateJavascript(
+                    "window.dispatchEvent(new Event('resize'));",
+                    null
+                )
             }
         }
 
@@ -218,15 +229,13 @@ object OnlyKdramaWebView {
             setPadding(dp(4), dp(4), dp(4), dp(4))
         }
 
-        fun makeButton(label: String): Button {
-            return Button(context).apply {
+        fun makeButton(label: String) =
+            Button(context).apply {
                 text = label
                 isAllCaps = false
                 minHeight = dp(48)
                 minimumHeight = dp(48)
-                setPadding(dp(4), 0, dp(4), 0)
             }
-        }
 
         val back = makeButton("BACK")
         val refresh = makeButton("REFRESH")
@@ -234,68 +243,34 @@ object OnlyKdramaWebView {
 
         controls.addView(
             back,
-            LinearLayout.LayoutParams(0, dp(52), 1f).apply {
-                marginEnd = dp(3)
-            }
+            LinearLayout.LayoutParams(0, dp(52), 1f)
         )
-
         controls.addView(
             refresh,
-            LinearLayout.LayoutParams(0, dp(52), 1f).apply {
-                marginStart = dp(3)
-                marginEnd = dp(3)
-            }
+            LinearLayout.LayoutParams(0, dp(52), 1f)
         )
-
         controls.addView(
             close,
-            LinearLayout.LayoutParams(0, dp(52), 1f).apply {
-                marginStart = dp(3)
-            }
+            LinearLayout.LayoutParams(0, dp(52), 1f)
         )
 
         val content = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.WHITE)
-            minimumWidth = 0
-            minimumHeight = 0
+            setBackgroundColor(Color.BLACK)
 
-            addView(
-                status,
-                LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    dp(48)
-                )
-            )
-
-            addView(
-                progress,
-                LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    dp(3)
-                )
-            )
+            addView(header, LinearLayout.LayoutParams(-1, dp(54)))
+            addView(status, LinearLayout.LayoutParams(-1, dp(48)))
+            addView(progress, LinearLayout.LayoutParams(-1, dp(3)))
 
             addView(
                 webView,
-                LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    0,
-                    1f
-                )
+                LinearLayout.LayoutParams(-1, 0, 1f)
             )
 
-            addView(
-                controls,
-                LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    dp(60)
-                )
-            )
+            addView(controls, LinearLayout.LayoutParams(-1, dp(60)))
         }
 
         val dialog = AlertDialog.Builder(context)
-            .setTitle("OnlyKDrama · Cloudflare Verification")
             .setView(content)
             .create()
 
@@ -313,9 +288,7 @@ object OnlyKdramaWebView {
         }
 
         back.setOnClickListener {
-            if (webView.canGoBack()) {
-                webView.goBack()
-            }
+            if (webView.canGoBack()) webView.goBack()
         }
 
         refresh.setOnClickListener {
@@ -327,7 +300,6 @@ object OnlyKdramaWebView {
         }
 
         dialog.setOnKeyListener { _, keyCode, event ->
-
             if (
                 keyCode == KeyEvent.KEYCODE_BACK &&
                 event.action == KeyEvent.ACTION_UP
@@ -351,22 +323,21 @@ object OnlyKdramaWebView {
 
         val metrics = context.resources.displayMetrics
 
-        val dialogWidth = metrics.widthPixels - dp(24)
-        val dialogHeight = metrics.heightPixels - dp(100)
-
         dialog.window?.apply {
-            setBackgroundDrawableResource(
-                android.R.color.white
-            )
-
+            setBackgroundDrawableResource(android.R.color.transparent)
             setGravity(Gravity.CENTER)
-
             setLayout(
-                dialogWidth,
-                dialogHeight
+                metrics.widthPixels - dp(24),
+                metrics.heightPixels - dp(100)
             )
         }
 
+        webView.onResume()
+        webView.resumeTimers()
         webView.loadUrl(HOME_URL)
+
+        webView.postDelayed({
+            refreshWebView()
+        }, 500)
     }
 }
