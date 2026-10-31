@@ -1,0 +1,8 @@
+{
+  "name": "Kdrama",
+  "description": "Kdrama CloudStream Extensions",
+  "manifestVersion": 1,
+  "pluginLists": [
+    "https://raw.githubusercontent.com/anime239/Kdrama/builds/plugins.json"
+  ]
+}
