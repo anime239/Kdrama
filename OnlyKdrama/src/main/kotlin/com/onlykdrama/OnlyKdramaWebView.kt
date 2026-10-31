@@ -4,18 +4,59 @@ package com.onlykdrama
 import android.annotation.SuppressLint
 import android.app.AlertDialog
 import android.content.Context
-import android.graphics.Color
 import android.graphics.Bitmap
+import android.graphics.Color
+import android.net.Uri
 import android.net.http.SslError
+import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
-import android.view.KeyEvent
-import android.webkit.*
-import android.widget.*
+import android.webkit.CookieManager
+import android.webkit.SslErrorHandler
+import android.webkit.WebChromeClient
+import android.webkit.WebResourceError
+import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
+import android.webkit.WebSettings
+import android.webkit.WebView
+import android.webkit.WebViewClient
+import android.widget.Button
+import android.widget.LinearLayout
+import android.widget.ProgressBar
+import android.widget.TextView
 
 object OnlyKdramaWebView {
 
-    private const val HOME_URL = "https://onlykdrama.shop/"
+    const val HOME_URL = "https://onlykdrama.shop/"
+
+    fun hasSiteCookies(): Boolean {
+        return CookieManager.getInstance()
+            .getCookie(HOME_URL)
+            .orEmpty()
+            .isNotBlank()
+    }
+
+    fun clearSiteCookies(
+        context: Context,
+        onDone: (() -> Unit)? = null
+    ) {
+        val manager = CookieManager.getInstance()
+        val cookies = manager.getCookie(HOME_URL).orEmpty()
+
+        cookies.split(";")
+            .map { it.substringBefore("=").trim() }
+            .filter { it.isNotBlank() }
+            .distinct()
+            .forEach { name ->
+                manager.setCookie(
+                    HOME_URL,
+                    "$name=; Max-Age=0; path=/"
+                )
+            }
+
+        manager.flush()
+        onDone?.invoke()
+    }
 
     @SuppressLint("SetJavaScriptEnabled")
     fun open(context: Context) {
@@ -23,34 +64,14 @@ object OnlyKdramaWebView {
         val cookieManager = CookieManager.getInstance()
         cookieManager.setAcceptCookie(true)
 
-        val webView = WebView(context).apply {
-            setBackgroundColor(Color.WHITE)
-            setLayerType(View.LAYER_TYPE_HARDWARE, null)
-        }
-
-        cookieManager.setAcceptThirdPartyCookies(webView, true)
-
-        webView.settings.apply {
-            javaScriptEnabled = true
-            domStorageEnabled = true
-            databaseEnabled = true
-            loadsImagesAutomatically = true
-            blockNetworkImage = false
-            useWideViewPort = true
-            loadWithOverviewMode = true
-            javaScriptCanOpenWindowsAutomatically = true
-            setSupportMultipleWindows(true)
-            mixedContentMode =
-                WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
-            cacheMode = WebSettings.LOAD_DEFAULT
-            allowFileAccess = false
-            allowContentAccess = true
-        }
+        val density = context.resources.displayMetrics.density
+        fun dp(value: Int): Int = (value * density).toInt()
 
         val status = TextView(context).apply {
-            text = "Connecting to OnlyKDrama..."
+            text = "Opening OnlyKDrama..."
             textSize = 13f
-            setPadding(12, 10, 12, 10)
+            setTextColor(Color.DKGRAY)
+            setPadding(dp(12), dp(10), dp(12), dp(10))
         }
 
         val progress = ProgressBar(
@@ -59,6 +80,39 @@ object OnlyKdramaWebView {
             android.R.attr.progressBarStyleHorizontal
         ).apply {
             max = 100
+            progress = 0
+        }
+
+        val webView = WebView(context).apply {
+            setBackgroundColor(Color.WHITE)
+        }
+
+        cookieManager.setAcceptThirdPartyCookies(webView, true)
+
+        webView.settings.apply {
+            javaScriptEnabled = true
+            domStorageEnabled = true
+            databaseEnabled = true
+
+            loadsImagesAutomatically = true
+            blockNetworkImage = false
+
+            useWideViewPort = true
+            loadWithOverviewMode = true
+
+            javaScriptCanOpenWindowsAutomatically = true
+            setSupportMultipleWindows(false)
+
+            mixedContentMode =
+                WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+
+            cacheMode = WebSettings.LOAD_DEFAULT
+
+            allowFileAccess = false
+            allowContentAccess = true
+
+            builtInZoomControls = true
+            displayZoomControls = false
         }
 
         webView.webChromeClient = object : WebChromeClient() {
@@ -68,8 +122,14 @@ object OnlyKdramaWebView {
                 newProgress: Int
             ) {
                 progress.progress = newProgress
+
                 progress.visibility =
-                    if (newProgress >= 100) View.GONE else View.VISIBLE
+                    if (newProgress >= 100) View.GONE
+                    else View.VISIBLE
+
+                if (newProgress < 100) {
+                    status.text = "Loading website... $newProgress%"
+                }
             }
 
             override fun onReceivedTitle(
@@ -80,18 +140,6 @@ object OnlyKdramaWebView {
                     status.text = title
                 }
             }
-
-            override fun onConsoleMessage(
-                consoleMessage: ConsoleMessage
-            ): Boolean {
-                if (consoleMessage.messageLevel() ==
-                    ConsoleMessage.MessageLevel.ERROR
-                ) {
-                    status.text =
-                        "Website script error: ${consoleMessage.message()}"
-                }
-                return true
-            }
         }
 
         webView.webViewClient = object : WebViewClient() {
@@ -101,7 +149,7 @@ object OnlyKdramaWebView {
                 url: String?,
                 favicon: Bitmap?
             ) {
-                status.text = "Loading website..."
+                status.text = "Loading OnlyKDrama..."
                 progress.visibility = View.VISIBLE
             }
 
@@ -113,7 +161,8 @@ object OnlyKdramaWebView {
 
                 progress.visibility = View.GONE
 
-                status.text = "Loaded: ${url ?: "Unknown URL"}"
+                status.text =
+                    "Complete any website verification shown below."
             }
 
             override fun onReceivedError(
@@ -123,18 +172,18 @@ object OnlyKdramaWebView {
             ) {
                 if (request?.isForMainFrame == true) {
                     status.text =
-                        "Page error: ${error?.description}"
+                        "Page error: ${error?.description ?: "Unknown error"}"
                 }
             }
 
             override fun onReceivedHttpError(
                 view: WebView?,
                 request: WebResourceRequest?,
-                errorResponse: WebResourceResponse?
+                response: WebResourceResponse?
             ) {
                 if (request?.isForMainFrame == true) {
                     status.text =
-                        "HTTP error: ${errorResponse?.statusCode}"
+                        "Website HTTP error: ${response?.statusCode ?: "Unknown"}"
                 }
             }
 
@@ -144,12 +193,23 @@ object OnlyKdramaWebView {
                 error: SslError?
             ) {
                 handler?.cancel()
-                status.text = "SSL certificate error"
+                status.text =
+                    "Secure connection failed. Check your network and device date."
+            }
+
+            override fun shouldOverrideUrlLoading(
+                view: WebView?,
+                request: WebResourceRequest?
+            ): Boolean {
+                val uri: Uri = request?.url ?: return false
+
+                return uri.scheme != "https" &&
+                    uri.scheme != "http"
             }
         }
 
         val back = Button(context).apply {
-            text = "Back"
+            text = "BACK"
             setOnClickListener {
                 if (webView.canGoBack()) {
                     webView.goBack()
@@ -158,50 +218,76 @@ object OnlyKdramaWebView {
         }
 
         val refresh = Button(context).apply {
-            text = "Refresh"
+            text = "REFRESH"
             setOnClickListener {
                 webView.reload()
             }
         }
 
         val close = Button(context).apply {
-            text = "Close"
+            text = "CLOSE"
         }
 
-        val buttons = LinearLayout(context).apply {
+        val controls = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
 
-            addView(back, LinearLayout.LayoutParams(0, -2, 1f))
-            addView(refresh, LinearLayout.LayoutParams(0, -2, 1f))
-            addView(close, LinearLayout.LayoutParams(0, -2, 1f))
+            addView(
+                back,
+                LinearLayout.LayoutParams(0, -2, 1f)
+            )
+
+            addView(
+                refresh,
+                LinearLayout.LayoutParams(0, -2, 1f)
+            )
+
+            addView(
+                close,
+                LinearLayout.LayoutParams(0, -2, 1f)
+            )
         }
 
-        val layout = LinearLayout(context).apply {
+        val content = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(Color.WHITE)
 
-            addView(status, LinearLayout.LayoutParams(-1, -2))
-            addView(progress, LinearLayout.LayoutParams(-1, 4))
+            addView(
+                status,
+                LinearLayout.LayoutParams(-1, -2)
+            )
+
+            addView(
+                progress,
+                LinearLayout.LayoutParams(-1, dp(3))
+            )
+
             addView(
                 webView,
                 LinearLayout.LayoutParams(-1, 0, 1f)
             )
-            addView(buttons, LinearLayout.LayoutParams(-1, -2))
+
+            addView(
+                controls,
+                LinearLayout.LayoutParams(-1, -2)
+            )
         }
 
         val dialog = AlertDialog.Builder(context)
-            .setTitle("OnlyKDrama Browser")
-            .setView(layout)
+            .setTitle("OnlyKDrama · Cloudflare Verification")
+            .setView(content)
             .create()
 
-        var destroyed = false
+        var cleaned = false
 
         fun cleanup() {
-            if (destroyed) return
-            destroyed = true
+            if (cleaned) return
+            cleaned = true
 
             cookieManager.flush()
+
             webView.stopLoading()
+            webView.loadUrl("about:blank")
+            webView.removeAllViews()
             webView.destroy()
         }
 
@@ -211,6 +297,7 @@ object OnlyKdramaWebView {
         }
 
         dialog.setOnKeyListener { _, keyCode, event ->
+
             if (
                 keyCode == KeyEvent.KEYCODE_BACK &&
                 event.action == KeyEvent.ACTION_UP
@@ -221,6 +308,7 @@ object OnlyKdramaWebView {
                     cleanup()
                     dialog.dismiss()
                 }
+
                 true
             } else {
                 false
@@ -235,7 +323,7 @@ object OnlyKdramaWebView {
 
         dialog.window?.setLayout(
             ViewGroup.LayoutParams.MATCH_PARENT,
-            (context.resources.displayMetrics.heightPixels * 0.90).toInt()
+            (context.resources.displayMetrics.heightPixels * 0.90f).toInt()
         )
 
         webView.loadUrl(HOME_URL)
