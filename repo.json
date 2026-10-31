@@ -1,0 +1,9 @@
+{
+  "name": "Kdrama",
+  "description": "Cozy K-drama & romcom comfort 💕",
+  "manifestVersion": 1,
+  "pluginLists": [
+    "https://raw.githubusercontent.com/anime239/Kdrama/builds/plugins.json"
+  ],
+  "iconUrl": "https://avatars.githubusercontent.com/u/323659707"
+}

@@ -1,0 +1,23 @@
+[
+    {
+        "iconUrl": "https://raw.githubusercontent.com/anime239/Kdrama/refs/heads/main/icons/OnlyKdrama.png",
+        "fileHash": "sha256-bf5e45b77d97bb74a6426f7d4ad2e99306969bc828a8be523a36d8a10bd2fc05",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/anime239/Kdrama",
+        "fileSize": 94382,
+        "status": 1,
+        "language": "hi",
+        "authors": [
+            "Kdrama"
+        ],
+        "tvTypes": [
+            "Movie",
+            "TvSeries"
+        ],
+        "version": 13,
+        "internalName": "OnlyKdrama",
+        "description": "OnlyKdrama",
+        "url": "https://raw.githubusercontent.com/anime239/Kdrama/builds/OnlyKdrama.cs3",
+        "name": "OnlyKdrama"
+    }
+]
