@@ -31,6 +31,21 @@ class OnlyKdrama : MainAPI() {
         )
     }
 
+    private fun isCloudflareChallenge(html: String): Boolean {
+        val page = html.lowercase()
+
+        return page.contains("cf-chl-") ||
+            page.contains("challenge-platform") ||
+            page.contains("performing security verification") ||
+            page.contains("just a moment...")
+    }
+
+    private fun getDocument(url: String): Document {
+        // This function is intentionally not used for network access.
+        // Requests are performed in the suspend functions below.
+        throw UnsupportedOperationException()
+    }
+
     private fun parseVideos(document: Document): List<SearchResponse> {
         val results = mutableListOf<SearchResponse>()
         val seen = mutableSetOf<String>()
@@ -77,6 +92,22 @@ class OnlyKdrama : MainAPI() {
         return results
     }
 
+    private suspend fun fetchDocument(url: String): Document {
+        val response = app.get(
+            url,
+            headers = headers
+        )
+
+        if (isCloudflareChallenge(response.text)) {
+            throw ErrorLoadingException(
+                "OnlyKDrama requires browser verification. " +
+                    "Open OnlyKDrama from plugin settings and retry."
+            )
+        }
+
+        return response.document
+    }
+
     override suspend fun getMainPage(
         page: Int,
         request: MainPageRequest
@@ -89,10 +120,7 @@ class OnlyKdrama : MainAPI() {
             "$mainUrl/page/$pageNumber/"
         }
 
-        val document = app.get(
-            url,
-            headers = headers
-        ).document
+        val document = fetchDocument(url)
 
         val hasNext = document.select(
             "a[href*='/page/']"
@@ -130,10 +158,7 @@ class OnlyKdrama : MainAPI() {
         val url = "$mainUrl/advance-search/?q=$encodedQuery&type=all&lang=&genre=&year=&min_rating=0&sort=latest" +
             if (pageNumber > 1) "&paged=$pageNumber" else ""
 
-        val document = app.get(
-            url,
-            headers = headers
-        ).document
+        val document = fetchDocument(url)
 
         val hasNext = document.select(
             "a[href*='paged=']"
