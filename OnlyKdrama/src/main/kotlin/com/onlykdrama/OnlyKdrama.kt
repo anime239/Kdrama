@@ -4,7 +4,6 @@ package com.onlykdrama
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import org.jsoup.nodes.Document
-import org.jsoup.nodes.Element
 import java.net.URLEncoder
 
 class OnlyKdrama : MainAPI() {
@@ -32,28 +31,6 @@ class OnlyKdrama : MainAPI() {
         )
     }
 
-    private fun getPoster(element: Element?): String? {
-        if (element == null) return null
-
-        val image = if (element.tagName() == "img") {
-            element
-        } else {
-            element.selectFirst("img")
-        }
-
-        val poster = listOf(
-            image?.attr("data-src"),
-            image?.attr("data-lazy-src"),
-            image?.attr("data-original"),
-            image?.attr("src"),
-            element.attr("data-bg")
-        ).firstOrNull {
-            !it.isNullOrBlank() && !it.startsWith("data:")
-        } ?: return null
-
-        return absoluteUrl(poster)
-    }
-
     private fun parseVideos(document: Document): List<SearchResponse> {
         val results = mutableListOf<SearchResponse>()
         val seen = mutableSetOf<String>()
@@ -67,14 +44,24 @@ class OnlyKdrama : MainAPI() {
             if (href.isBlank()) continue
 
             val url = absoluteUrl(href)
-            if (!url.startsWith("$mainUrl/") || !seen.add(url)) continue
+
+            if (!url.startsWith("$mainUrl/") || !seen.add(url)) {
+                continue
+            }
 
             val title = link.text().trim()
                 .ifBlank { link.attr("aria-label").trim() }
 
             if (title.isBlank()) continue
 
-            val poster = getPoster(card.selectFirst(".poster img"))
+            val poster = card.selectFirst(".poster img")
+                ?.attr("src")
+                ?.takeIf {
+                    it.isNotBlank() && !it.startsWith("data:")
+                }
+                ?.let {
+                    absoluteUrl(it)
+                }
 
             results.add(
                 newTvSeriesSearchResponse(
@@ -94,10 +81,12 @@ class OnlyKdrama : MainAPI() {
         page: Int,
         request: MainPageRequest
     ): HomePageResponse {
-        val url = if (page <= 1) {
-            mainUrl
+        val pageNumber = page.coerceAtLeast(1)
+
+        val url = if (pageNumber == 1) {
+            "$mainUrl/"
         } else {
-            "$mainUrl/page/$page/"
+            "$mainUrl/page/$pageNumber/"
         }
 
         val document = app.get(
@@ -105,17 +94,32 @@ class OnlyKdrama : MainAPI() {
             headers = headers
         ).document
 
+        val hasNext = document.select(
+            "a[href*='/page/']"
+        ).any { element ->
+            val nextPage = Regex("""/page/(\d+)/?""")
+                .find(element.attr("href"))
+                ?.groupValues
+                ?.getOrNull(1)
+                ?.toIntOrNull()
+
+            nextPage != null && nextPage > pageNumber
+        }
+
         return newHomePageResponse(
-            request.name,
-            parseVideos(document),
-            hasNext = false
+            HomePageList(
+                name = request.name,
+                list = parseVideos(document),
+                isHorizontalImages = true
+            ),
+            hasNext = hasNext
         )
     }
 
     private suspend fun searchPage(
         query: String,
         page: Int
-        ): Pair<List<SearchResponse>, Boolean> {
+    ): Pair<List<SearchResponse>, Boolean> {
         val encodedQuery = URLEncoder.encode(
             query.trim(),
             "UTF-8"
@@ -143,7 +147,10 @@ class OnlyKdrama : MainAPI() {
             nextPage != null && nextPage > pageNumber
         }
 
-        return Pair(parseVideos(document), hasNext)
+        return Pair(
+            parseVideos(document),
+            hasNext
+        )
     }
 
     override suspend fun search(
@@ -162,71 +169,5 @@ class OnlyKdrama : MainAPI() {
             results,
             hasNext = hasNext
         )
-    }
-
-    override suspend fun load(
-        url: String
-    ): LoadResponse? {
-        val document = app.get(
-            url,
-            headers = headers
-        ).document
-
-        val title = document.selectFirst(
-            "h1"
-        )?.text()?.trim()
-            ?: document.title().substringBefore("|").trim()
-
-        if (title.isBlank()) return null
-
-        val poster = document.selectFirst(
-            "meta[property=og:image]"
-        )?.attr("content")?.takeIf {
-            it.isNotBlank()
-        } ?: getPoster(
-            document.selectFirst("img")
-        )
-
-        return newMovieLoadResponse(
-            title,
-            url,
-            TvType.Movie,
-            url
-        ) {
-            posterUrl = poster?.let { absoluteUrl(it) }
-        }
-    }
-
-    override suspend fun loadLinks(
-        data: String,
-        isCasting: Boolean,
-        subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        val document = app.get(
-            data,
-            headers = headers
-        ).document
-
-        val videoUrl = document.selectFirst(
-            "video source[src], video[src]"
-        )?.attr("src")?.takeIf {
-            it.isNotBlank()
-        } ?: return false
-
-        callback(
-            newExtractorLink(
-                name,
-                name,
-                absoluteUrl(videoUrl),
-                ExtractorLinkType.VIDEO
-            ) {
-                this.referer = data
-                this.quality = Qualities.Unknown.value
-                this.headers = headers
-            }
-        )
-
-        return true
     }
 }
