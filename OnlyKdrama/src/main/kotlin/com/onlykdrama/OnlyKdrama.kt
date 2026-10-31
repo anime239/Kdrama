@@ -58,33 +58,23 @@ class OnlyKdrama : MainAPI() {
         val results = mutableListOf<SearchResponse>()
         val seen = mutableSetOf<String>()
 
-        val cards = document.select(
-            ".thumb.item, .thumb_rel.item"
-        )
+        for (card in document.select("article.item")) {
+            val link = card.selectFirst(".data h3 a[href]")
+                ?: card.selectFirst(".poster a[href]")
+                ?: continue
 
-        for (card in cards) {
-            val link = card.selectFirst("a[href]") ?: continue
             val href = link.attr("href").trim()
-
             if (href.isBlank()) continue
 
             val url = absoluteUrl(href)
+            if (!url.startsWith("$mainUrl/") || !seen.add(url)) continue
 
-            if (!url.startsWith("$mainUrl/") || !seen.add(url)) {
-                continue
-            }
-
-            val title = link.attr("title").ifBlank {
-                card.selectFirst(".title")?.text()?.trim().orEmpty()
-            }.ifBlank {
-                card.text().trim()
-            }
+            val title = link.text().trim()
+                .ifBlank { link.attr("aria-label").trim() }
 
             if (title.isBlank()) continue
 
-            val poster = getPoster(
-                card.selectFirst("img")
-            )
+            val poster = getPoster(card.selectFirst(".poster img"))
 
             results.add(
                 newTvSeriesSearchResponse(
@@ -123,27 +113,55 @@ class OnlyKdrama : MainAPI() {
     }
 
     private suspend fun searchPage(
-        query: String
-    ): List<SearchResponse> {
+        query: String,
+        page: Int
+        ): Pair<List<SearchResponse>, Boolean> {
         val encodedQuery = URLEncoder.encode(
             query.trim(),
             "UTF-8"
         )
 
-        val url = "$mainUrl/advance-search/?q=$encodedQuery&type=all&lang=&genre=&year=&min_rating=0&sort=latest"
+        val pageNumber = page.coerceAtLeast(1)
+
+        val url = "$mainUrl/advance-search/?q=$encodedQuery&type=all&lang=&genre=&year=&min_rating=0&sort=latest" +
+            if (pageNumber > 1) "&paged=$pageNumber" else ""
 
         val document = app.get(
             url,
             headers = headers
         ).document
 
-        return parseVideos(document)
+        val hasNext = document.select(
+            "a[href*='paged=']"
+        ).any { element ->
+            val nextPage = Regex("""paged=(\d+)""")
+                .find(element.attr("href"))
+                ?.groupValues
+                ?.getOrNull(1)
+                ?.toIntOrNull()
+
+            nextPage != null && nextPage > pageNumber
+        }
+
+        return Pair(parseVideos(document), hasNext)
     }
 
     override suspend fun search(
         query: String
     ): List<SearchResponse> {
-        return searchPage(query)
+        return searchPage(query, 1).first
+    }
+
+    override suspend fun search(
+        query: String,
+        page: Int
+    ): SearchResponseList? {
+        val (results, hasNext) = searchPage(query, page)
+
+        return newSearchResponseList(
+            results,
+            hasNext = hasNext
+        )
     }
 
     override suspend fun load(
