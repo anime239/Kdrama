@@ -12,11 +12,18 @@ class OnlyKdrama : MainAPI() {
     override var name = "OnlyKDrama"
     override var lang = "hi"
     override val hasMainPage = true
-    override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries)
+    override val usesWebView = true
+
+    override val supportedTypes = setOf(
+        TvType.Movie,
+        TvType.TvSeries
+    )
 
     private val headers = mapOf(
         "User-Agent" to "Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Mobile Safari/537.36",
-        "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+        "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language" to "en-US,en;q=0.9",
+        "Referer" to "https://onlykdrama.shop/"
     )
 
     override val mainPage = mainPageOf(
@@ -37,20 +44,19 @@ class OnlyKdrama : MainAPI() {
         return page.contains("cf-chl-") ||
             page.contains("challenge-platform") ||
             page.contains("performing security verification") ||
-            page.contains("just a moment...")
+            page.contains("just a moment...") ||
+            page.contains("cf-browser-verification")
     }
 
-    private fun getDocument(url: String): Document {
-        // This function is intentionally not used for network access.
-        // Requests are performed in the suspend functions below.
-        throw UnsupportedOperationException()
-    }
+    private fun parseVideos(
+        document: Document
+    ): List<SearchResponse> {
 
-    private fun parseVideos(document: Document): List<SearchResponse> {
         val results = mutableListOf<SearchResponse>()
         val seen = mutableSetOf<String>()
 
         for (card in document.select("article.item")) {
+
             val link = card.selectFirst(".data h3 a[href]")
                 ?: card.selectFirst(".poster a[href]")
                 ?: continue
@@ -65,7 +71,9 @@ class OnlyKdrama : MainAPI() {
             }
 
             val title = link.text().trim()
-                .ifBlank { link.attr("aria-label").trim() }
+                .ifBlank {
+                    link.attr("aria-label").trim()
+                }
 
             if (title.isBlank()) continue
 
@@ -92,26 +100,43 @@ class OnlyKdrama : MainAPI() {
         return results
     }
 
-    private suspend fun fetchDocument(url: String): Document {
+    private suspend fun fetchDocument(
+        url: String
+    ): Document {
+
         val response = app.get(
             url,
             headers = headers
         )
 
-        if (isCloudflareChallenge(response.text)) {
+        val html = response.text
+
+        if (isCloudflareChallenge(html)) {
             throw ErrorLoadingException(
-                "OnlyKDrama requires browser verification. " +
-                    "Open OnlyKDrama from plugin settings and retry."
+                "OnlyKDrama needs website verification. " +
+                "Open OnlyKDrama plugin settings, select Open Browser, " +
+                "complete verification, then retry. " +
+                "The browser session is separate from provider requests."
             )
         }
 
-        return response.document
+        val document = response.document
+
+        if (document.select("article.item").isEmpty()) {
+            throw ErrorLoadingException(
+                "OnlyKDrama returned no drama cards. " +
+                "The website response may have changed or blocked the request."
+            )
+        }
+
+        return document
     }
 
     override suspend fun getMainPage(
         page: Int,
         request: MainPageRequest
     ): HomePageResponse {
+
         val pageNumber = page.coerceAtLeast(1)
 
         val url = if (pageNumber == 1) {
@@ -125,6 +150,7 @@ class OnlyKdrama : MainAPI() {
         val hasNext = document.select(
             "a[href*='/page/']"
         ).any { element ->
+
             val nextPage = Regex("""/page/(\d+)/?""")
                 .find(element.attr("href"))
                 ?.groupValues
@@ -134,10 +160,12 @@ class OnlyKdrama : MainAPI() {
             nextPage != null && nextPage > pageNumber
         }
 
+        val results = parseVideos(document)
+
         return newHomePageResponse(
             HomePageList(
                 name = request.name,
-                list = parseVideos(document),
+                list = results,
                 isHorizontalImages = true
             ),
             hasNext = hasNext
@@ -148,6 +176,7 @@ class OnlyKdrama : MainAPI() {
         query: String,
         page: Int
     ): Pair<List<SearchResponse>, Boolean> {
+
         val encodedQuery = URLEncoder.encode(
             query.trim(),
             "UTF-8"
@@ -155,7 +184,8 @@ class OnlyKdrama : MainAPI() {
 
         val pageNumber = page.coerceAtLeast(1)
 
-        val url = "$mainUrl/advance-search/?q=$encodedQuery&type=all&lang=&genre=&year=&min_rating=0&sort=latest" +
+        val url =
+            "$mainUrl/advance-search/?q=$encodedQuery&type=all&lang=&genre=&year=&min_rating=0&sort=latest" +
             if (pageNumber > 1) "&paged=$pageNumber" else ""
 
         val document = fetchDocument(url)
@@ -163,6 +193,7 @@ class OnlyKdrama : MainAPI() {
         val hasNext = document.select(
             "a[href*='paged=']"
         ).any { element ->
+
             val nextPage = Regex("""paged=(\d+)""")
                 .find(element.attr("href"))
                 ?.groupValues
@@ -188,6 +219,7 @@ class OnlyKdrama : MainAPI() {
         query: String,
         page: Int
     ): SearchResponseList? {
+
         val (results, hasNext) = searchPage(query, page)
 
         return newSearchResponseList(
