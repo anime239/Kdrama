@@ -8,6 +8,7 @@ import android.graphics.Bitmap
 import android.graphics.Color
 import android.net.Uri
 import android.net.http.SslError
+import android.view.Gravity
 import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
@@ -65,13 +66,17 @@ object OnlyKdramaWebView {
         cookieManager.setAcceptCookie(true)
 
         val density = context.resources.displayMetrics.density
-        fun dp(value: Int): Int = (value * density).toInt()
+
+        fun dp(value: Int): Int =
+            (value * density).toInt()
 
         val status = TextView(context).apply {
             text = "Opening OnlyKDrama..."
             textSize = 13f
-            setTextColor(Color.DKGRAY)
+            setTextColor(Color.WHITE)
             setPadding(dp(12), dp(10), dp(12), dp(10))
+            setBackgroundColor(Color.rgb(45, 45, 45))
+            gravity = Gravity.CENTER_VERTICAL
         }
 
         val progress = ProgressBar(
@@ -81,10 +86,12 @@ object OnlyKdramaWebView {
         ).apply {
             max = 100
             progress = 0
+            visibility = View.VISIBLE
         }
 
         val webView = WebView(context).apply {
             setBackgroundColor(Color.WHITE)
+            overScrollMode = View.OVER_SCROLL_NEVER
         }
 
         cookieManager.setAcceptThirdPartyCookies(webView, true)
@@ -158,11 +165,8 @@ object OnlyKdramaWebView {
                 url: String?
             ) {
                 cookieManager.flush()
-
                 progress.visibility = View.GONE
-
-                status.text =
-                    "Complete any website verification shown below."
+                status.text = "Complete any website verification shown below."
             }
 
             override fun onReceivedError(
@@ -183,7 +187,7 @@ object OnlyKdramaWebView {
             ) {
                 if (request?.isForMainFrame == true) {
                     status.text =
-                        "Website HTTP error: ${response?.statusCode ?: "Unknown"}"
+                        "HTTP error: ${response?.statusCode ?: "Unknown"}"
                 }
             }
 
@@ -193,8 +197,7 @@ object OnlyKdramaWebView {
                 error: SslError?
             ) {
                 handler?.cancel()
-                status.text =
-                    "Secure connection failed. Check your network and device date."
+                status.text = "Secure connection failed."
             }
 
             override fun shouldOverrideUrlLoading(
@@ -208,67 +211,86 @@ object OnlyKdramaWebView {
             }
         }
 
-        val back = Button(context).apply {
-            text = "BACK"
-            setOnClickListener {
-                if (webView.canGoBack()) {
-                    webView.goBack()
-                }
-            }
-        }
-
-        val refresh = Button(context).apply {
-            text = "REFRESH"
-            setOnClickListener {
-                webView.reload()
-            }
-        }
-
-        val close = Button(context).apply {
-            text = "CLOSE"
-        }
-
         val controls = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
-
-            addView(
-                back,
-                LinearLayout.LayoutParams(0, -2, 1f)
-            )
-
-            addView(
-                refresh,
-                LinearLayout.LayoutParams(0, -2, 1f)
-            )
-
-            addView(
-                close,
-                LinearLayout.LayoutParams(0, -2, 1f)
-            )
+            gravity = Gravity.CENTER
+            setBackgroundColor(Color.WHITE)
+            setPadding(dp(4), dp(4), dp(4), dp(4))
         }
+
+        fun makeButton(label: String): Button {
+            return Button(context).apply {
+                text = label
+                isAllCaps = false
+                minHeight = dp(48)
+                minimumHeight = dp(48)
+                setPadding(dp(4), 0, dp(4), 0)
+            }
+        }
+
+        val back = makeButton("BACK")
+        val refresh = makeButton("REFRESH")
+        val close = makeButton("CLOSE")
+
+        controls.addView(
+            back,
+            LinearLayout.LayoutParams(0, dp(52), 1f).apply {
+                marginEnd = dp(3)
+            }
+        )
+
+        controls.addView(
+            refresh,
+            LinearLayout.LayoutParams(0, dp(52), 1f).apply {
+                marginStart = dp(3)
+                marginEnd = dp(3)
+            }
+        )
+
+        controls.addView(
+            close,
+            LinearLayout.LayoutParams(0, dp(52), 1f).apply {
+                marginStart = dp(3)
+            }
+        )
 
         val content = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(Color.WHITE)
+            minimumWidth = 0
+            minimumHeight = 0
 
             addView(
                 status,
-                LinearLayout.LayoutParams(-1, -2)
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    dp(48)
+                )
             )
 
             addView(
                 progress,
-                LinearLayout.LayoutParams(-1, dp(3))
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    dp(3)
+                )
             )
 
             addView(
                 webView,
-                LinearLayout.LayoutParams(-1, 0, 1f)
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    0,
+                    1f
+                )
             )
 
             addView(
                 controls,
-                LinearLayout.LayoutParams(-1, -2)
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    dp(60)
+                )
             )
         }
 
@@ -284,15 +306,23 @@ object OnlyKdramaWebView {
             cleaned = true
 
             cookieManager.flush()
-
             webView.stopLoading()
             webView.loadUrl("about:blank")
             webView.removeAllViews()
             webView.destroy()
         }
 
+        back.setOnClickListener {
+            if (webView.canGoBack()) {
+                webView.goBack()
+            }
+        }
+
+        refresh.setOnClickListener {
+            webView.reload()
+        }
+
         close.setOnClickListener {
-            cleanup()
             dialog.dismiss()
         }
 
@@ -305,10 +335,8 @@ object OnlyKdramaWebView {
                 if (webView.canGoBack()) {
                     webView.goBack()
                 } else {
-                    cleanup()
                     dialog.dismiss()
                 }
-
                 true
             } else {
                 false
@@ -321,10 +349,23 @@ object OnlyKdramaWebView {
 
         dialog.show()
 
-        dialog.window?.setLayout(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            (context.resources.displayMetrics.heightPixels * 0.90f).toInt()
-        )
+        val metrics = context.resources.displayMetrics
+
+        val dialogWidth = metrics.widthPixels - dp(24)
+        val dialogHeight = metrics.heightPixels - dp(100)
+
+        dialog.window?.apply {
+            setBackgroundDrawableResource(
+                android.R.color.white
+            )
+
+            setGravity(Gravity.CENTER)
+
+            setLayout(
+                dialogWidth,
+                dialogHeight
+            )
+        }
 
         webView.loadUrl(HOME_URL)
     }
