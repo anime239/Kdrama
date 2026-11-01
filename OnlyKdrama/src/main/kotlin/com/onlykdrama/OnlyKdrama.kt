@@ -43,39 +43,17 @@ class OnlyKdrama : MainAPI() {
         "/drama/" to "TV Shows",
         "/movies/" to "Movies",
         "/genres/ongoing/" to "Ongoing",
-        "/genres/completed/" to "Completed",
-        "/genres/upcoming/" to "Upcoming",
-
-        // Drama Collections
-        "/genres/koren-drama/" to "Korean Drama",
-        "/genres/chinese-drama/" to "Chinese Drama",
-        "/genres/japanese-drama/" to "Japanese Drama",
-        "/genres/hindi-dubbed-drama/" to "Hindi Dubbed Drama",
-        "/genres/hindi-dubbed-movie/" to "Hindi Dubbed Movies",
-        "/genres/english-dubbed-drama/" to "English Dubbed Drama",
-        "/genres/english-dubbed-movie/" to "English Dubbed Movies",
-
-
-
         // Popular Genres
         "/genres/action/" to "Action",
         "/genres/romance/" to "Romance",
+        "/genres/youth/" to "Youth",
         "/genres/comedy/" to "Comedy",
         "/genres/thriller/" to "Thriller",
         "/genres/mystery/" to "Mystery",
         "/genres/crime/" to "Crime",
-        "/genres/fantasy/" to "Fantasy",
         "/genres/horror/" to "Horror",
         "/genres/adventure/" to "Adventure",
-        "/genres/sci-fi/" to "Sci-Fi",
-        "/genres/supernatural/" to "Supernatural",
-        "/genres/historical/" to "Historical",
-        "/genres/family/" to "Family",
-        "/genres/psychological/" to "Psychological",
-        "/genres/animation/" to "Animation",
-        "/genres/martial-arts/" to "Martial Arts",
-        "/genres/war/" to "War",
-        "/genres/youth/" to "Youth"
+        "/genres/sci-fi/" to "Sci-Fi"
     )
 
     private fun absolute(url: String?): String? {
