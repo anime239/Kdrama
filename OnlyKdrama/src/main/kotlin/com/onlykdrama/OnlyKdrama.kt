@@ -448,27 +448,39 @@ class OnlyKdrama : MainAPI() {
             ?.toInt()
     }
 
-    private fun parseEpisodes(
-        document: Document,
-        poster: String?,
-        plot: String?
-        ): List<Episode> {
-        val results = mutableListOf<Episode>()
 
-        val contentRoot = document.selectFirst("#info .wp-content")
-            ?: return results
+private fun parseEpisodes(
+    document: Document,
+    poster: String?,
+    plot: String?
+): List<Episode> {
+    val contentRoot = document.selectFirst("#info .wp-content")
+        ?: return emptyList()
 
-        val allAccordions = contentRoot.select(
-            ".wp-block-ub-content-toggle-accordion"
-        )
+    val accordions = contentRoot.select(
+        ".wp-block-ub-content-toggle-accordion"
+    ).filter { accordion ->
+        accordion.parents().none {
+            it.hasClass("wp-block-ub-content-toggle-accordion")
+        }
+    }
 
-        val episodeAccordions = allAccordions.filter { accordion ->
-            val content = accordion.selectFirst(
-                ".wp-block-ub-content-toggle-accordion-content-wrap"
-            )
+    if (accordions.isEmpty()) return emptyList()
 
-            content?.selectFirst(
+    val nestedLayout = accordions.any { accordion ->
+        accordion.selectFirst(
+            ".wp-block-ub-content-toggle-accordion-content-wrap " +
                 ".wp-block-ub-content-toggle-accordion"
+        ) != null
+    }
+
+    val results = mutableListOf<Episode>()
+
+    if (nestedLayout) {
+        val episodeAccordions = accordions.filter { accordion ->
+            accordion.selectFirst(
+                ".wp-block-ub-content-toggle-accordion-content-wrap " +
+                    ".wp-block-ub-content-toggle-accordion"
             ) != null
         }
 
@@ -476,7 +488,8 @@ class OnlyKdrama : MainAPI() {
             episodeAccordions.mapIndexedNotNull { index, accordion ->
                 val title = accordion.selectFirst(
                     ".wp-block-ub-content-toggle-accordion-title"
-                )?.text()?.trim()?.ifBlank { null }
+                )?.text()?.trim()
+                    ?.ifBlank { null }
                     ?: "Episode ${index + 1}"
 
                 val content = accordion.selectFirst(
@@ -497,13 +510,15 @@ class OnlyKdrama : MainAPI() {
             val links = JSONArray()
             val seenUrls = mutableSetOf<String>()
 
-            val providerEntries = if (providerAccordions.isNotEmpty()) {
+            val providers = if (providerAccordions.isNotEmpty()) {
                 providerAccordions.mapNotNull { accordion ->
                     val title = accordion.selectFirst(
                         ".wp-block-ub-content-toggle-accordion-title"
                     )?.text()?.trim()
-                        ?.replace("Download Links", "")?.trim()
-                        ?.ifBlank { null } ?: "Download"
+                        ?.replace("Download Links", "")
+                        ?.trim()
+                        ?.ifBlank { null }
+                        ?: "Download"
 
                     val content = accordion.selectFirst(
                         ".wp-block-ub-content-toggle-accordion-content-wrap"
@@ -515,7 +530,7 @@ class OnlyKdrama : MainAPI() {
                 listOf("Download" to episodeContent)
             }
 
-            for ((provider, providerContent) in providerEntries) {
+            for ((provider, providerContent) in providers) {
                 for (element in providerContent.select(
                     "a[href], [data-href], [data-url]"
                 )) {
@@ -545,15 +560,18 @@ class OnlyKdrama : MainAPI() {
                 }
             }
 
-            Log.d(
-                "OnlyKDrama",
-                "$episodeTitle: ${links.length()} download links collected"
-            )
-
             if (links.length() == 0) continue
 
             val episodeNumber = Regex("[0-9]+")
-                .find(episodeTitle)?.value?.toIntOrNull() ?: index
+                .find(episodeTitle)
+                ?.value
+                ?.toIntOrNull() ?: index
+
+            val seasonNumber = Regex(
+                """(?i)\bS(?:eason)?\s*0*(\d+)"""
+            ).find(episodeTitle)
+                ?.groupValues?.getOrNull(1)
+                ?.toIntOrNull() ?: 1
 
             val episodeData = JSONObject()
                 .put("title", episodeTitle)
@@ -562,22 +580,115 @@ class OnlyKdrama : MainAPI() {
 
             results.add(newEpisode(episodeData) {
                 name = episodeTitle
-                season = 1
+                season = seasonNumber
                 episode = episodeNumber
                 posterUrl = poster
                 description = plot?.take(180)?.let {
-                    if (plot.length > 180) "${it.substringBeforeLast(" ")}..." else it
+                    if (plot.length > 180) {
+                        "${it.substringBeforeLast(" ")}..."
+                    } else {
+                        it
+                    }
                 }
             })
         }
+    } else {
+        // Flat quality/file groups: each accordion contains links
+        // for multiple episodes, identified by S01E01, S01E02, etc.
 
-        Log.d(
-            "OnlyKDrama",
-            "Total playable episode entries: ${results.size}"
+        data class EpisodeGroup(
+            val season: Int,
+            val episode: Int,
+            val links: JSONArray = JSONArray(),
+            val seen: MutableSet<String> = mutableSetOf()
         )
 
-        return results
+        val episodeGroups = linkedMapOf<Pair<Int, Int>, EpisodeGroup>()
+
+        for (accordion in accordions) {
+            val provider = accordion.selectFirst(
+                ".wp-block-ub-content-toggle-accordion-title"
+            )?.text()?.trim()
+                ?.ifBlank { null }
+                ?: "Download"
+
+            val content = accordion.selectFirst(
+                ".wp-block-ub-content-toggle-accordion-content-wrap"
+            ) ?: continue
+
+            for (element in content.select(
+                "a[href], [data-href], [data-url]"
+            )) {
+                val rawUrl = listOf(
+                    element.attr("href"),
+                    element.attr("data-href"),
+                    element.attr("data-url")
+                ).firstOrNull { it.isNotBlank() } ?: continue
+
+                val link = absolute(rawUrl) ?: continue
+                if (!link.startsWith("http", true)) continue
+
+                val fileName = element.text().trim()
+                    .ifBlank { element.attr("title").trim() }
+                    .ifBlank { element.attr("aria-label").trim() }
+
+                val sourceText = "$fileName $provider"
+
+                val match = Regex(
+                    """(?i)\bS\s*0*(\d{1,2})\s*E\s*0*(\d{1,3})\b"""
+                ).find(sourceText) ?: continue
+
+                val season = match.groupValues[1].toIntOrNull() ?: 1
+                val episode = match.groupValues[2].toIntOrNull() ?: continue
+
+                val key = season to episode
+                val group = episodeGroups.getOrPut(key) {
+                    EpisodeGroup(season, episode)
+                }
+
+                if (!group.seen.add(link)) continue
+
+                group.links.put(
+                    JSONObject()
+                        .put("name", fileName.ifBlank { provider })
+                        .put("url", link)
+                        .put("provider", provider)
+                )
+            }
+        }
+
+        for ((key, group) in episodeGroups) {
+            if (group.links.length() == 0) continue
+
+            val episodeTitle = "Episode ${group.episode}"
+
+            val episodeData = JSONObject()
+                .put("title", episodeTitle)
+                .put("links", group.links)
+                .toString()
+
+            results.add(newEpisode(episodeData) {
+                name = episodeTitle
+                season = group.season
+                episode = group.episode
+                posterUrl = poster
+                description = plot?.take(180)?.let {
+                    if (plot.length > 180) {
+                        "${it.substringBeforeLast(" ")}..."
+                    } else {
+                        it
+                    }
+                }
+            })
+        }
     }
+
+    return results.sortedWith(
+        compareBy<Episode> { it.season ?: 1 }
+            .thenBy { it.episode ?: 0 }
+    )
+}
+
 
     override suspend fun load(url: String): LoadResponse? {
         val document = getDocument(url)
