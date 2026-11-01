@@ -1,6 +1,7 @@
 
 package com.onlykdrama
 
+import android.os.SystemClock
 import android.util.Log
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
@@ -13,7 +14,10 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -38,12 +42,18 @@ class OnlyKdrama : MainAPI() {
         "Referer" to "$mainUrl/"
     )
 
+    private val requestMutex = Mutex()
+    private var lastRequestAt = 0L
+    private var rateLimitedUntil = 0L
+
+    private val minimumRequestInterval = 3000L
+    private val rateLimitCooldown = 10 * 60 * 1000L
+
     override val mainPage = mainPageOf(
         "" to "New Releases",
         "/drama/" to "TV Shows",
         "/movies/" to "Movies",
         "/genres/ongoing/" to "Ongoing",
-        // Popular Genres
         "/genres/action/" to "Action",
         "/genres/romance/" to "Romance",
         "/genres/youth/" to "Youth",
@@ -79,10 +89,56 @@ class OnlyKdrama : MainAPI() {
             "Requesting $url; savedCookies=${OnlyKdramaSession.savedCookieNamesForLog()}"
         )
 
-        val response = app.get(
-            url,
-            headers = requestHeaders
-        )
+        val response = requestMutex.withLock {
+
+            val now = SystemClock.elapsedRealtime()
+
+            if (now < rateLimitedUntil) {
+                val remaining = rateLimitedUntil - now
+
+                throw ErrorLoadingException(
+                    "OnlyKDrama is temporarily rate-limited. Retry after ${remaining / 1000} seconds."
+                )
+            }
+
+            val waitTime =
+                minimumRequestInterval - (now - lastRequestAt)
+
+            if (waitTime > 0) {
+                delay(waitTime)
+            }
+
+            lastRequestAt = SystemClock.elapsedRealtime()
+
+            val result = app.get(
+                url,
+                headers = requestHeaders
+            )
+
+            val responseText = result.text
+            val responseLower = responseText.lowercase()
+
+            val isRateLimited =
+                responseLower.contains("error 1015") ||
+                responseLower.contains("you are being rate limited") ||
+                responseLower.contains("has banned you temporarily")
+
+            if (isRateLimited) {
+                rateLimitedUntil =
+                    SystemClock.elapsedRealtime() + rateLimitCooldown
+
+                Log.e(
+                    "OnlyKDrama",
+                    "Cloudflare Error 1015 detected. Requests paused for 10 minutes."
+                )
+
+                throw ErrorLoadingException(
+                    "Cloudflare Error 1015: OnlyKDrama has temporarily rate-limited this connection. Wait before retrying."
+                )
+            }
+
+            result
+        }
 
         val html = response.text
         val lower = html.lowercase()
@@ -116,7 +172,7 @@ class OnlyKdrama : MainAPI() {
                         !hasHomeCards &&
                         !hasSearchCards &&
                         !hasDetailContent
-                    )
+                )
 
         Log.d(
             "OnlyKDrama",
@@ -191,7 +247,7 @@ class OnlyKdrama : MainAPI() {
 
     private fun parseHome(
         document: Document
-        ): List<SearchResponse> {
+    ): List<SearchResponse> {
         val results = mutableListOf<SearchResponse>()
         val seen = mutableSetOf<String>()
 
@@ -250,7 +306,7 @@ class OnlyKdrama : MainAPI() {
 
     private fun parseSearch(
         document: Document
-        ): List<SearchResponse> {
+    ): List<SearchResponse> {
         val results = mutableListOf<SearchResponse>()
         val seen = mutableSetOf<String>()
 
@@ -304,7 +360,7 @@ class OnlyKdrama : MainAPI() {
 
     override suspend fun search(
         query: String
-        ): List<SearchResponse> {
+    ): List<SearchResponse> {
         val encodedQuery = URLEncoder.encode(
             query.trim(),
             "UTF-8"
@@ -459,8 +515,6 @@ class OnlyKdrama : MainAPI() {
             ?.toInt()
     }
 
-
-
     private fun parseMovieLinks(document: Document): String {
         val root = document.selectFirst(
             "#info .wp-content > .wp-block-ub-content-toggle-block"
@@ -521,12 +575,11 @@ class OnlyKdrama : MainAPI() {
             .toString()
     }
 
-
     private fun parseEpisodes(
         document: Document,
         poster: String?,
         plot: String?
-        ): List<Episode> {
+    ): List<Episode> {
         val contentRoot = document.selectFirst("#info .wp-content")
             ?: return emptyList()
 
@@ -666,9 +719,6 @@ class OnlyKdrama : MainAPI() {
                 })
             }
         } else {
-            // Flat quality/file groups: each accordion contains links
-            // for multiple episodes, identified by S01E01, S01E02, etc.
-
             data class EpisodeGroup(
                 val season: Int,
                 val episode: Int,
@@ -762,7 +812,6 @@ class OnlyKdrama : MainAPI() {
         )
     }
 
-
     override suspend fun load(url: String): LoadResponse? {
         val document = getDocument(url)
 
@@ -782,34 +831,32 @@ class OnlyKdrama : MainAPI() {
 
         val isMovie = url.contains("/movies/")
 
+        if (isMovie) {
+            val movieData = parseMovieLinks(document)
 
-    if (isMovie) {
-        val movieData = parseMovieLinks(document)
+            val movieLinks = runCatching {
+                JSONObject(movieData).getJSONArray("links")
+            }.getOrNull()
 
-        val movieLinks = runCatching {
-            JSONObject(movieData).getJSONArray("links")
-        }.getOrNull()
+            if (movieLinks == null || movieLinks.length() == 0) {
+                throw ErrorLoadingException(
+                    "No movie download links found on OnlyKDrama."
+                )
+            }
 
-        if (movieLinks == null || movieLinks.length() == 0) {
-            throw ErrorLoadingException(
-                "No movie download links found on OnlyKDrama."
-            )
+            return newMovieLoadResponse(
+                title,
+                url,
+                TvType.Movie,
+                movieData
+            ) {
+                posterUrl = poster
+                this.plot = plot
+                this.year = year
+                this.tags = tags
+                this.score = rating?.let { Score.from10(it) }
+            }
         }
-
-        return newMovieLoadResponse(
-            title,
-            url,
-            TvType.Movie,
-            movieData
-        ) {
-            posterUrl = poster
-            this.plot = plot
-            this.year = year
-            this.tags = tags
-            this.score = rating?.let { Score.from10(it) }
-        }
-    }
-
 
         val episodes = parseEpisodes(
             document,
@@ -842,7 +889,7 @@ class OnlyKdrama : MainAPI() {
         isCasting: Boolean,
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
-        ): Boolean {
+    ): Boolean {
         val links = runCatching {
             JSONObject(data).getJSONArray("links")
         }.getOrNull() ?: return false
