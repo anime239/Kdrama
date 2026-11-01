@@ -600,7 +600,7 @@ class OnlyKdrama : MainAPI() {
                 this.plot = plot
                 this.year = year
                 this.tags = tags
-                this.rating = rating
+                this.score = rating?.let { Score.from10(it) }
             }
         }
 
@@ -626,7 +626,7 @@ class OnlyKdrama : MainAPI() {
             this.plot = plot
             this.year = year
             this.tags = tags
-            this.rating = rating
+            this.score = rating?.let { Score.from10(it) }
         }
     }
 
