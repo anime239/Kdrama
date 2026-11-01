@@ -115,11 +115,13 @@ class OnlyKdrama : MainAPI() {
         if (isChallenge) {
             Log.e(
                 "OnlyKDrama",
-                "Cloudflare challenge detected. URL=$url; cookieNames=${OnlyKdramaSession.savedCookieNamesForLog()}; cf_clearance=${OnlyKdramaSession.hasCloudflareClearanceForLog()}"
+                "Cloudflare challenge detected: $url"
             )
 
+            OnlyKdramaVerification.challengeDetected()
+
             throw ErrorLoadingException(
-                "OnlyKDrama returned a Cloudflare verification page."
+                "Cloudflare verification required. Complete verification in the OnlyKDrama popup and retry."
             )
         }
 

@@ -182,6 +182,7 @@ object OnlyKdramaWebView {
                     status.text = "Unable to save session. Try again."
                     return@evaluateJavascript
                 }
+                OnlyKdramaVerification.sessionVerified()
 
                 val hasClearance = OnlyKdramaSession
                     .hasCloudflareClearance(context)

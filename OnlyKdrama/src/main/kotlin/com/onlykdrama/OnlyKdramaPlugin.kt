@@ -1,4 +1,3 @@
-
 package com.onlykdrama
 
 import android.app.AlertDialog
@@ -13,22 +12,20 @@ class OnlyKdramaPlugin : Plugin() {
     override fun load(context: Context) {
 
         OnlyKdramaSession.initialize(context)
+        OnlyKdramaVerification.initialize(context)
 
         registerMainAPI(OnlyKdrama())
 
         openSettings = { ctx ->
 
             val saved = OnlyKdramaSession.hasSavedSession(ctx)
-
             val browserCookies = OnlyKdramaWebView.hasSiteCookies()
 
             val status = buildString {
                 append("Saved HTTP session: ")
                 append(if (saved) "Available" else "Not available")
-
                 append("\nBrowser cookies: ")
                 append(if (browserCookies) "Available" else "Not available")
-
                 append("\n\n")
                 append("Open the website, complete any verification ")
                 append("requested by the website, then press SAVE SESSION.")
