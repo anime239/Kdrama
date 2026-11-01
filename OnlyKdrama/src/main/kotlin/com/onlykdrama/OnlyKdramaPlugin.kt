@@ -11,24 +11,32 @@ import com.lagradost.cloudstream3.plugins.Plugin
 class OnlyKdramaPlugin : Plugin() {
 
     override fun load(context: Context) {
+
+        OnlyKdramaSession.initialize(context)
+
         registerMainAPI(OnlyKdrama())
 
         openSettings = { ctx ->
-            val hasCookies = OnlyKdramaWebView.hasSiteCookies()
 
-            val status = if (hasCookies) {
-                "Browser session: Cookies stored"
-            } else {
-                "Browser session: No cookies stored"
+            val saved = OnlyKdramaSession.hasSavedSession(ctx)
+
+            val browserCookies = OnlyKdramaWebView.hasSiteCookies()
+
+            val status = buildString {
+                append("Saved HTTP session: ")
+                append(if (saved) "Available" else "Not available")
+
+                append("\nBrowser cookies: ")
+                append(if (browserCookies) "Available" else "Not available")
+
+                append("\n\n")
+                append("Open the website, complete any verification ")
+                append("requested by the website, then press SAVE SESSION.")
             }
 
             AlertDialog.Builder(ctx)
-                .setTitle("OnlyKDrama Settings")
-                .setMessage(
-                    "$status\n\n" +
-                    "Complete website verification in the browser if required.\n\n" +
-                    "WebView cookies are not automatically shared with CloudStream HTTP requests."
-                )
+                .setTitle("OnlyKDrama · Session Settings")
+                .setMessage(status)
                 .setPositiveButton("OPEN WEBSITE") { _, _ ->
                     try {
                         OnlyKdramaWebView.open(ctx)
@@ -40,11 +48,11 @@ class OnlyKdramaPlugin : Plugin() {
                         ).show()
                     }
                 }
-                .setNeutralButton("CLEAR COOKIES") { _, _ ->
+                .setNeutralButton("CLEAR SESSION") { _, _ ->
                     OnlyKdramaWebView.clearSiteCookies(ctx) {
                         Toast.makeText(
                             ctx,
-                            "Cookies cleared",
+                            "OnlyKDrama session cleared",
                             Toast.LENGTH_SHORT
                         ).show()
                     }
