@@ -95,8 +95,6 @@ object OnlyKdramaWebView {
         fun dp(value: Int): Int =
             (value * density).toInt()
 
-        // Fixed maximum window dimensions.
-
         val screenWidth =
             context.resources.displayMetrics.widthPixels
 
@@ -113,8 +111,6 @@ object OnlyKdramaWebView {
             screenHeight - dp(64)
         ).coerceAtLeast(dp(400))
 
-        // Explicit WebView height prevents initial zero-height layout.
-
         val webViewHeight = (
             windowHeight - dp(270)
         ).coerceAtLeast(dp(130))
@@ -127,6 +123,7 @@ object OnlyKdramaWebView {
         var cleaned = false
         var saved = false
         var checking = false
+        var rateLimited = false
 
         lateinit var dialog: AlertDialog
 
@@ -183,12 +180,7 @@ object OnlyKdramaWebView {
         }
 
         titleArea.addView(
-            makeText(
-                "OnlyKDrama",
-                18f,
-                TEXT,
-                true
-            )
+            makeText("OnlyKDrama", 18f, TEXT, true)
         )
 
         titleArea.addView(
@@ -223,7 +215,7 @@ object OnlyKdramaWebView {
 
         header.addView(secureBadge)
 
-        // Verification status panel
+        // Status panel
 
         val statusPanel = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
@@ -259,7 +251,7 @@ object OnlyKdramaWebView {
 
         statusPanel.addView(status)
 
-        // Progress indicator
+        // Progress
 
         val progress = ProgressBar(
             context,
@@ -306,10 +298,10 @@ object OnlyKdramaWebView {
             displayZoomControls = false
         }
 
-        // Automatic verification and session saving.
+        // Automatic session saving
 
         fun saveVerifiedSession() {
-            if (saved || cleaned) return
+            if (saved || cleaned || rateLimited) return
 
             val currentHost = runCatching {
                 Uri.parse(webView.url.orEmpty()).host
@@ -337,13 +329,10 @@ object OnlyKdramaWebView {
                 return
             }
 
-            val userAgent =
-                webView.settings.userAgentString
-
             val result = OnlyKdramaSession.save(
                 context,
                 cookies,
-                userAgent
+                webView.settings.userAgentString
             )
 
             if (!result) {
@@ -372,12 +361,17 @@ object OnlyKdramaWebView {
             }, 900L)
         }
 
-        // Poll the website until Cloudflare verification finishes.
+        // Automatic Cloudflare detection
 
         val autoCheck = object : Runnable {
 
             override fun run() {
-                if (cleaned || saved || !dialog.isShowing) {
+                if (
+                    cleaned ||
+                    saved ||
+                    rateLimited ||
+                    !dialog.isShowing
+                ) {
                     return
                 }
 
@@ -415,6 +409,15 @@ object OnlyKdramaWebView {
                             ? document.body.innerText.toLowerCase()
                             : "";
 
+                        if (
+                            html.includes("error 1015") ||
+                            body.includes("error 1015") ||
+                            body.includes("you are being rate limited") ||
+                            body.includes("has banned you temporarily")
+                        ) {
+                            return 2;
+                        }
+
                         var challenge =
                             html.includes("cf-chl-") ||
                             html.includes("challenge-platform") ||
@@ -422,25 +425,54 @@ object OnlyKdramaWebView {
                             body.includes("checking your browser") ||
                             body.includes("verify you are human");
 
+                        if (challenge) return 0;
+
                         return document.readyState === "complete" &&
-                               body.length > 100 &&
-                               !challenge;
+                               body.length > 100 ? 1 : 0;
                     })();
                     """.trimIndent()
                 ) { result ->
 
                     checking = false
 
-                    if (cleaned || saved) return@evaluateJavascript
-
-                    if (result == "true") {
-                        saveVerifiedSession()
-                    } else {
-                        status.text =
-                            "Waiting for website verification..."
+                    if (cleaned || saved) {
+                        return@evaluateJavascript
                     }
 
-                    if (!saved && !cleaned) {
+                    when (result) {
+
+                        "2" -> {
+                            rateLimited = true
+
+                            handler.removeCallbacks(this)
+
+                            progress.visibility = View.GONE
+
+                            status.text =
+                                "Cloudflare Error 1015: This connection is temporarily rate-limited. Close the popup and wait before retrying."
+
+                            secureBadge.text = "RATE LIMITED"
+
+                            secureBadge.setTextColor(
+                                0xFFFF9999.toInt()
+                            )
+                        }
+
+                        "1" -> {
+                            saveVerifiedSession()
+                        }
+
+                        else -> {
+                            status.text =
+                                "Waiting for website verification..."
+                        }
+                    }
+
+                    if (
+                        !saved &&
+                        !cleaned &&
+                        !rateLimited
+                    ) {
                         handler.postDelayed(
                             this,
                             CHECK_INTERVAL
@@ -490,7 +522,7 @@ object OnlyKdramaWebView {
 
                 progress.visibility = View.GONE
 
-                if (!saved) {
+                if (!saved && !rateLimited) {
                     status.text =
                         "Checking website security automatically..."
 
@@ -637,8 +669,7 @@ object OnlyKdramaWebView {
             setPadding(0, dp(7), 0, dp(2))
         }
 
-        // Main popup layout.
-        // WebView uses a fixed calculated height, not weight.
+        // Main popup layout
 
         val content = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
@@ -717,8 +748,6 @@ object OnlyKdramaWebView {
             .setView(content)
             .create()
 
-        // Cleanup
-
         fun cleanup() {
             if (cleaned) return
 
@@ -746,7 +775,18 @@ object OnlyKdramaWebView {
         }
 
         refresh.setOnClickListener {
+            if (saved || cleaned) return@setOnClickListener
+
+            rateLimited = false
+            checking = false
+
+            secureBadge.text = "● SECURE"
+            secureBadge.setTextColor(
+                0xFFBBA0FF.toInt()
+            )
+
             status.text = "Refreshing website..."
+
             handler.removeCallbacks(autoCheck)
             webView.reload()
         }
@@ -777,7 +817,7 @@ object OnlyKdramaWebView {
             cleanup()
         }
 
-        // Show and measure the dialog before loading the website.
+        // Show and measure popup before loading the website
 
         dialog.show()
 
@@ -794,7 +834,7 @@ object OnlyKdramaWebView {
             )
         }
 
-        // Explicit first layout pass fixes the initial invisible WebView.
+        // First layout pass
 
         content.post {
             if (cleaned || !dialog.isShowing) {
