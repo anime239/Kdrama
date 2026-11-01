@@ -68,8 +68,11 @@ class OnlyKdrama : MainAPI() {
         val lower = html.lowercase()
         val document = response.document
 
-        val hasDramaCards =
+        val hasHomeCards =
             document.select("article.item").isNotEmpty()
+
+        val hasSearchCards =
+            document.select(".search-page .result-item").isNotEmpty()
 
         val hasCfChallengeToken =
             lower.contains("cf-chl-") ||
@@ -85,11 +88,11 @@ class OnlyKdrama : MainAPI() {
         val isChallenge =
             hasCfChallengeToken ||
                 hasVerificationText ||
-                (hasChallengePlatform && !hasDramaCards)
+                (hasChallengePlatform && !hasHomeCards && !hasSearchCards)
 
         Log.d(
             "OnlyKDrama",
-            "Response diagnostics: url=$url, htmlLength=${html.length}, dramaCards=$hasDramaCards, cfChallengeToken=$hasCfChallengeToken, verificationText=$hasVerificationText, challengePlatform=$hasChallengePlatform, isChallenge=$isChallenge"
+            "Response diagnostics: url=$url, htmlLength=${html.length}, homeCards=$hasHomeCards, searchCards=$hasSearchCards, cfChallengeToken=$hasCfChallengeToken, verificationText=$hasVerificationText, challengePlatform=$hasChallengePlatform, isChallenge=$isChallenge"
         )
 
         if (isChallenge) {
