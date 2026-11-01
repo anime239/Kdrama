@@ -4,6 +4,8 @@ package com.onlykdrama
 import android.util.Log
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
+import org.json.JSONArray
+import org.json.JSONObject
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import java.net.URLEncoder
@@ -74,6 +76,9 @@ class OnlyKdrama : MainAPI() {
         val hasSearchCards =
             document.select(".search-page .result-item").isNotEmpty()
 
+        val hasDetailContent =
+            document.selectFirst("#single .sheader .data h1") != null
+
         val hasCfChallengeToken =
             lower.contains("cf-chl-") ||
                 lower.contains("__cf_chl_tk")
@@ -88,11 +93,16 @@ class OnlyKdrama : MainAPI() {
         val isChallenge =
             hasCfChallengeToken ||
                 hasVerificationText ||
-                (hasChallengePlatform && !hasHomeCards && !hasSearchCards)
+                (
+                    hasChallengePlatform &&
+                        !hasHomeCards &&
+                        !hasSearchCards &&
+                        !hasDetailContent
+                    )
 
         Log.d(
             "OnlyKDrama",
-            "Response diagnostics: url=$url, htmlLength=${html.length}, homeCards=$hasHomeCards, searchCards=$hasSearchCards, cfChallengeToken=$hasCfChallengeToken, verificationText=$hasVerificationText, challengePlatform=$hasChallengePlatform, isChallenge=$isChallenge"
+            "Response diagnostics: url=$url, htmlLength=${html.length}, homeCards=$hasHomeCards, searchCards=$hasSearchCards, detailContent=$hasDetailContent, cfChallengeToken=$hasCfChallengeToken, verificationText=$hasVerificationText, challengePlatform=$hasChallengePlatform, isChallenge=$isChallenge"
         )
 
         if (isChallenge) {
@@ -377,5 +387,299 @@ class OnlyKdrama : MainAPI() {
             ),
             hasNext = hasNextPage(document, pageNumber)
         )
+    }
+
+    private fun getDetailPoster(document: Document): String? {
+        val image = document.selectFirst(
+            "#single .sheader .poster img"
+        ) ?: return null
+
+        val attributes = listOf(
+            "src",
+            "data-src",
+            "data-lazy-src",
+            "data-original",
+            "data-image"
+        )
+
+        for (attribute in attributes) {
+            val value = image.attr(attribute).trim()
+
+            if (value.isBlank() || value.startsWith("data:")) {
+                continue
+            }
+
+            return absolute(value)
+        }
+
+        return null
+    }
+
+    private fun getSynopsis(document: Document): String? {
+        val info = document.selectFirst("#info") ?: return null
+
+        val synopsisBox = info.select(".sbox").firstOrNull {
+            it.selectFirst("h2")?.text()
+                ?.trim()
+                ?.equals("Synopsis", true) == true
+        } ?: return null
+
+        return synopsisBox.selectFirst(".wp-content")
+            ?.text()
+            ?.trim()
+            ?.ifBlank { null }
+    }
+
+    private fun getTags(document: Document): List<String> {
+        return document.select(
+            "#single .sheader .data .sgeneros a"
+        ).map {
+            it.text().trim()
+        }.filter {
+            it.isNotBlank()
+        }.distinct()
+    }
+
+    private fun getYear(document: Document): Int? {
+        val date = document.selectFirst(
+            "#single .sheader .data .extra .date"
+        )?.text().orEmpty()
+
+        return Regex("""\b(19|20)\d{2}\b")
+            .find(date)
+            ?.value
+            ?.toIntOrNull()
+    }
+
+    private fun getRating(document: Document): Int? {
+        return document.selectFirst(
+            "#single .sheader .data .dt_rating_vgs"
+        )?.text()
+            ?.trim()
+            ?.toFloatOrNull()
+            ?.toInt()
+    }
+
+    private fun parseEpisodes(
+        document: Document,
+        poster: String?,
+        plot: String?
+    ): List<Episode> {
+        val results = mutableListOf<Episode>()
+
+        val episodeRoot = document.selectFirst(
+            "#info .wp-content > .wp-block-ub-content-toggle-block"
+        ) ?: return results
+
+        val episodeAccordions = episodeRoot.children()
+            .filter {
+                it.hasClass("wp-block-ub-content-toggle-accordion")
+            }
+
+        for ((index, episodeAccordion) in episodeAccordions.withIndex()) {
+            val episodeTitle = episodeAccordion
+                .selectFirst(
+                    ":scope > .wp-block-ub-content-toggle-accordion-title-wrap .wp-block-ub-content-toggle-accordion-title"
+                )
+                ?.text()
+                ?.trim()
+                ?.ifBlank { null }
+                ?: "Episode ${index + 1}"
+
+            val episodeNumber = Regex("""\d+""")
+                .find(episodeTitle)
+                ?.value
+                ?.toIntOrNull()
+                ?: index + 1
+
+            val episodeContent = episodeAccordion.children()
+                .firstOrNull {
+                    it.hasClass(
+                        "wp-block-ub-content-toggle-accordion-content-wrap"
+                    )
+                } ?: continue
+
+            val providerRoot = episodeContent.children()
+                .firstOrNull {
+                    it.hasClass("wp-block-ub-content-toggle-block")
+                } ?: continue
+
+            val links = JSONArray()
+
+            val providerAccordions = providerRoot.children()
+                .filter {
+                    it.hasClass("wp-block-ub-content-toggle-accordion")
+                }
+
+            for (providerAccordion in providerAccordions) {
+                val provider = providerAccordion
+                    .selectFirst(
+                        ":scope > .wp-block-ub-content-toggle-accordion-title-wrap .wp-block-ub-content-toggle-accordion-title"
+                    )
+                    ?.text()
+                    ?.trim()
+                    ?.replace("Download Links", "")
+                    ?.trim()
+                    ?: "Download"
+
+                val providerContent = providerAccordion.children()
+                    .firstOrNull {
+                        it.hasClass(
+                            "wp-block-ub-content-toggle-accordion-content-wrap"
+                        )
+                    } ?: continue
+
+                for (anchor in providerContent.select("a[href]")) {
+                    val link = absolute(anchor.attr("href")) ?: continue
+                    val linkName = anchor.text().trim()
+
+                    if (linkName.isBlank()) continue
+
+                    links.put(
+                        JSONObject()
+                            .put("name", linkName)
+                            .put("url", link)
+                            .put("provider", provider)
+                    )
+                }
+            }
+
+            if (links.length() == 0) continue
+
+            val episodeData = JSONObject()
+                .put("title", episodeTitle)
+                .put("links", links)
+                .toString()
+
+            results.add(
+                newEpisode(episodeData) {
+                    name = episodeTitle
+                    season = 1
+                    episode = episodeNumber
+                    posterUrl = poster
+                    description = plot
+                }
+            )
+        }
+
+        Log.d(
+            "OnlyKDrama",
+            "Episode parsing completed: ${results.size} episodes found"
+        )
+
+        return results
+    }
+
+    override suspend fun load(url: String): LoadResponse? {
+        val document = getDocument(url)
+
+        val title = document.selectFirst(
+            "#single .sheader .data h1"
+        )?.text()
+            ?.trim()
+            ?.ifBlank { null }
+            ?: document.selectFirst("h1")?.text()?.trim()
+            ?: return null
+
+        val poster = getDetailPoster(document)
+        val plot = getSynopsis(document)
+        val tags = getTags(document)
+        val year = getYear(document)
+        val rating = getRating(document)
+
+        val isMovie = url.contains("/movies/")
+
+        if (isMovie) {
+            return newMovieLoadResponse(
+                title,
+                url,
+                TvType.Movie,
+                url
+            ) {
+                posterUrl = poster
+                this.plot = plot
+                this.year = year
+                this.tags = tags
+                this.rating = rating
+            }
+        }
+
+        val episodes = parseEpisodes(
+            document,
+            poster,
+            plot
+        )
+
+        if (episodes.isEmpty()) {
+            throw ErrorLoadingException(
+                "No episode download links found on this drama page."
+            )
+        }
+
+        Log.d(
+            "OnlyKDrama",
+            "Drama loaded: $title; episodes=${episodes.size}; links=${episodes.sumOf { episode ->
+                runCatching {
+                    JSONObject(episode.data).getJSONArray("links").length()
+                }.getOrDefault(0)
+            }}"
+        )
+
+        return newTvSeriesLoadResponse(
+            title,
+            url,
+            TvType.TvSeries,
+            episodes
+        ) {
+            posterUrl = poster
+            this.plot = plot
+            this.year = year
+            this.tags = tags
+            this.rating = rating
+        }
+    }
+
+    override suspend fun loadLinks(
+        data: String,
+        isCasting: Boolean,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        val links = runCatching {
+            JSONObject(data).getJSONArray("links")
+        }.getOrNull() ?: return false
+
+        var loaded = false
+
+        for (index in 0 until links.length()) {
+            val item = links.optJSONObject(index) ?: continue
+            val url = item.optString("url")
+            val provider = item.optString("provider")
+            val fileName = item.optString("name")
+
+            if (url.isBlank()) continue
+
+            Log.d(
+                "OnlyKDrama",
+                "Extracting provider=$provider; file=$fileName; url=$url"
+            )
+
+            try {
+                loadExtractor(
+                    url,
+                    mainUrl,
+                    subtitleCallback,
+                    callback
+                )
+                loaded = true
+            } catch (e: Exception) {
+                Log.e(
+                    "OnlyKDrama",
+                    "Extractor failed: provider=$provider; file=$fileName; ${e.message}"
+                )
+            }
+        }
+
+        return loaded
     }
 }
