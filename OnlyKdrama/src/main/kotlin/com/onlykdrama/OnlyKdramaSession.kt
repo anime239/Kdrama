@@ -2,9 +2,11 @@
 package com.onlykdrama
 
 import android.content.Context
+import android.util.Log
 
 object OnlyKdramaSession {
 
+    private const val TAG = "OnlyKDramaSession"
     private const val PREFS = "onlykdrama_session"
     private const val COOKIE_KEY = "cookies"
     private const val UA_KEY = "user_agent"
@@ -22,19 +24,36 @@ object OnlyKdramaSession {
             Context.MODE_PRIVATE
         )
 
+    private fun cookieNames(cookies: String?): List<String> {
+        return cookies.orEmpty()
+            .split(";")
+            .map { it.substringBefore("=").trim() }
+            .filter { it.isNotBlank() }
+            .distinct()
+    }
+
     fun save(
         context: Context,
         cookies: String?,
         userAgent: String?
-    ) {
+    ): Boolean {
         initialize(context)
 
-        if (cookies.isNullOrBlank()) return
+        if (cookies.isNullOrBlank()) return false
 
-        preferences(context).edit()
+        val names = cookieNames(cookies)
+
+        val saved = preferences(context).edit()
             .putString(COOKIE_KEY, cookies)
             .putString(UA_KEY, userAgent.orEmpty())
-            .apply()
+            .commit()
+
+        Log.d(
+            TAG,
+            "Session save=$saved, cookieNames=$names, cf_clearance=${names.any { it.equals("cf_clearance", true) }}"
+        )
+
+        return saved
     }
 
     fun hasSavedSession(context: Context): Boolean {
@@ -42,6 +61,21 @@ object OnlyKdramaSession {
             .getString(COOKIE_KEY, null)
             .orEmpty()
             .isNotBlank()
+    }
+
+    fun hasCloudflareClearance(context: Context): Boolean {
+        val cookies = preferences(context)
+            .getString(COOKIE_KEY, null)
+
+        return cookieNames(cookies)
+            .any { it.equals("cf_clearance", true) }
+    }
+
+    fun savedCookieNames(context: Context): List<String> {
+        val cookies = preferences(context)
+            .getString(COOKIE_KEY, null)
+
+        return cookieNames(cookies)
     }
 
     fun headers(
@@ -68,6 +102,8 @@ object OnlyKdramaSession {
         preferences(context).edit()
             .remove(COOKIE_KEY)
             .remove(UA_KEY)
-            .apply()
+            .commit()
+
+        Log.d(TAG, "Saved session cleared")
     }
 }
