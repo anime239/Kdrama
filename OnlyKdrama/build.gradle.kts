@@ -27,7 +27,7 @@ cloudstream {
     language = "hi"
 
     // Random CC logo I found
-    iconUrl = "https://upload.wikimedia.org/wikipedia/commons/2/2f/Korduene_Logo.png"
+    iconUrl = "https://github.com/anime239/Kdrama/blob/main/icons/OnlyKdrama.png"
 }
 
 android {
