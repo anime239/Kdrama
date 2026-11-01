@@ -445,7 +445,7 @@ class OnlyKdrama : MainAPI() {
             "#single .sheader .data .extra .date"
         )?.text().orEmpty()
 
-        return Regex("""\b(19|20)\d{2}\b")
+        return Regex("[0-9]{4}")
             .find(date)
             ?.value
             ?.toIntOrNull()
@@ -486,11 +486,11 @@ class OnlyKdrama : MainAPI() {
                 ?.ifBlank { null }
                 ?: "Episode ${index + 1}"
 
-            val episodeNumber = Regex("""\d+""")
+            val episodeNumber = Regex("[0-9]+")
                 .find(episodeTitle)
                 ?.value
                 ?.toIntOrNull()
-                ?: index + 1
+                ?: (index + 1)
 
             val episodeContent = episodeAccordion.children()
                 .firstOrNull {
@@ -615,15 +615,6 @@ class OnlyKdrama : MainAPI() {
                 "No episode download links found on this drama page."
             )
         }
-
-        Log.d(
-            "OnlyKDrama",
-            "Drama loaded: $title; episodes=${episodes.size}; links=${episodes.sumOf { episode ->
-                runCatching {
-                    JSONObject(episode.data).getJSONArray("links").length()
-                }.getOrDefault(0)
-            }}"
-        )
 
         return newTvSeriesLoadResponse(
             title,
