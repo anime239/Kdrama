@@ -1,3 +1,4 @@
+
 package com.onlykdrama
 
 import android.app.AlertDialog
@@ -18,17 +19,19 @@ class OnlyKdramaPlugin : Plugin() {
 
         openSettings = { ctx ->
 
-            val saved = OnlyKdramaSession.hasSavedSession(ctx)
-            val browserCookies = OnlyKdramaWebView.hasSiteCookies()
+            val saved =
+                OnlyKdramaSession.hasSavedSession(ctx)
+
+            val clearance =
+                OnlyKdramaSession.hasCloudflareClearance(ctx)
 
             val status = buildString {
-                append("Saved HTTP session: ")
+                append("Saved session: ")
                 append(if (saved) "Available" else "Not available")
-                append("\nBrowser cookies: ")
-                append(if (browserCookies) "Available" else "Not available")
+                append("\nCloudflare clearance: ")
+                append(if (clearance) "Available" else "Not available")
                 append("\n\n")
-                append("Open the website, complete any verification ")
-                append("requested by the website, then press SAVE SESSION.")
+                append("Verification and session saving happen automatically when required.")
             }
 
             AlertDialog.Builder(ctx)
