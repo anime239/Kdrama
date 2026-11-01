@@ -1,7 +1,6 @@
 
 package com.onlykdrama
 
-import android.os.SystemClock
 import android.util.Log
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
@@ -14,10 +13,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Semaphore
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -41,13 +37,6 @@ class OnlyKdrama : MainAPI() {
         "Accept-Language" to "en-US,en;q=0.9",
         "Referer" to "$mainUrl/"
     )
-
-    private val requestMutex = Mutex()
-    private var lastRequestAt = 0L
-    private var rateLimitedUntil = 0L
-
-    private val minimumRequestInterval = 3000L
-    private val rateLimitCooldown = 10 * 60 * 1000L
 
     override val mainPage = mainPageOf(
         "" to "New Releases",
@@ -89,56 +78,10 @@ class OnlyKdrama : MainAPI() {
             "Requesting $url; savedCookies=${OnlyKdramaSession.savedCookieNamesForLog()}"
         )
 
-        val response = requestMutex.withLock {
-
-            val now = SystemClock.elapsedRealtime()
-
-            if (now < rateLimitedUntil) {
-                val remaining = rateLimitedUntil - now
-
-                throw ErrorLoadingException(
-                    "OnlyKDrama is temporarily rate-limited. Retry after ${remaining / 1000} seconds."
-                )
-            }
-
-            val waitTime =
-                minimumRequestInterval - (now - lastRequestAt)
-
-            if (waitTime > 0) {
-                delay(waitTime)
-            }
-
-            lastRequestAt = SystemClock.elapsedRealtime()
-
-            val result = app.get(
-                url,
-                headers = requestHeaders
-            )
-
-            val responseText = result.text
-            val responseLower = responseText.lowercase()
-
-            val isRateLimited =
-                responseLower.contains("error 1015") ||
-                responseLower.contains("you are being rate limited") ||
-                responseLower.contains("has banned you temporarily")
-
-            if (isRateLimited) {
-                rateLimitedUntil =
-                    SystemClock.elapsedRealtime() + rateLimitCooldown
-
-                Log.e(
-                    "OnlyKDrama",
-                    "Cloudflare Error 1015 detected. Requests paused for 10 minutes."
-                )
-
-                throw ErrorLoadingException(
-                    "Cloudflare Error 1015: OnlyKDrama has temporarily rate-limited this connection. Wait before retrying."
-                )
-            }
-
-            result
-        }
+        val response = app.get(
+            url,
+            headers = requestHeaders
+        )
 
         val html = response.text
         val lower = html.lowercase()
@@ -172,7 +115,7 @@ class OnlyKdrama : MainAPI() {
                         !hasHomeCards &&
                         !hasSearchCards &&
                         !hasDetailContent
-                )
+                    )
 
         Log.d(
             "OnlyKDrama",
@@ -193,6 +136,44 @@ class OnlyKdrama : MainAPI() {
         }
 
         return document
+    }
+
+    private fun handleExtractorChallenge(error: Throwable) {
+        val message = generateSequence(error) { it.cause }
+            .mapNotNull { it.message }
+            .joinToString(" ")
+            .lowercase()
+
+        val isRateLimited =
+            message.contains("error 1015") ||
+                message.contains("you are being rate limited") ||
+                message.contains("rate limited") ||
+                message.contains("too many requests")
+
+        if (isRateLimited) {
+            Log.e(
+                "OnlyKDrama",
+                "Extractor rate limited: $message"
+            )
+            return
+        }
+
+        val isChallenge =
+            message.contains("cf-chl-") ||
+                message.contains("__cf_chl_tk") ||
+                message.contains("challenge-platform") ||
+                message.contains("just a moment") ||
+                message.contains("verify you are human") ||
+                message.contains("cloudflare challenge")
+
+        if (isChallenge) {
+            Log.e(
+                "OnlyKDrama",
+                "Cloudflare challenge detected during extraction"
+            )
+
+            OnlyKdramaVerification.challengeDetected()
+        }
     }
 
     private fun getPoster(article: Element): String? {
@@ -943,6 +924,8 @@ class OnlyKdrama : MainAPI() {
                         } catch (e: CancellationException) {
                             throw e
                         } catch (e: Exception) {
+                            handleExtractorChallenge(e)
+
                             Log.e(
                                 "OnlyKDrama",
                                 "Extractor failed: provider=$provider; file=$fileName; ${e.message}"
