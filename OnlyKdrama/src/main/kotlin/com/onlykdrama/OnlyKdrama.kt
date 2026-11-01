@@ -464,82 +464,73 @@ private fun parseEpisodes(
     document: Document,
     poster: String?,
     plot: String?
-): List<Episode> {
+    ): List<Episode> {
     val results = mutableListOf<Episode>()
 
-    val episodeRoot = document.selectFirst(
-        "#info .wp-content > .wp-block-ub-content-toggle-block"
-    ) ?: return results
+    val contentRoot = document.selectFirst("#info .wp-content")
+        ?: return results
 
-    val episodeAccordions = episodeRoot.children()
-        .filter {
-            it.hasClass("wp-block-ub-content-toggle-accordion")
-        }
+    val allAccordions = contentRoot.select(
+        ".wp-block-ub-content-toggle-accordion"
+    )
 
-    val episodeEntries = if (episodeAccordions.isNotEmpty()) {
+    val episodeAccordions = allAccordions.filter { accordion ->
+        val content = accordion.selectFirst(
+            ".wp-block-ub-content-toggle-accordion-content-wrap"
+        )
+
+        content?.selectFirst(
+            ".wp-block-ub-content-toggle-accordion"
+        ) != null
+    }
+
+    val entries = if (episodeAccordions.isNotEmpty()) {
         episodeAccordions.mapIndexedNotNull { index, accordion ->
-            val title = accordion.children()
-                .firstOrNull {
-                    it.hasClass("wp-block-ub-content-toggle-accordion-title-wrap")
-                }
-                ?.selectFirst(".wp-block-ub-content-toggle-accordion-title")
-                ?.text()?.trim()?.ifBlank { null }
+            val title = accordion.selectFirst(
+                ".wp-block-ub-content-toggle-accordion-title"
+            )?.text()?.trim()?.ifBlank { null }
                 ?: "Episode ${index + 1}"
 
-            val content = accordion.children()
-                .firstOrNull {
-                    it.hasClass("wp-block-ub-content-toggle-accordion-content-wrap")
-                } ?: return@mapIndexedNotNull null
+            val content = accordion.selectFirst(
+                ".wp-block-ub-content-toggle-accordion-content-wrap"
+            ) ?: return@mapIndexedNotNull null
 
             Triple(title, content, index + 1)
         }
     } else {
-        listOf(Triple("Episode 1", episodeRoot, 1))
+        listOf(Triple("Episode 1", contentRoot, 1))
     }
 
-    for ((episodeTitle, episodeContent, index) in episodeEntries) {
-        val providerRoot = episodeContent.children()
-            .firstOrNull {
-                it.hasClass("wp-block-ub-content-toggle-block")
-            }
-            ?: episodeContent.selectFirst(
-                ".wp-block-ub-content-toggle-block"
-            )
-            ?: episodeContent
-
-        val providerAccordions = when {
-            providerRoot.hasClass("wp-block-ub-content-toggle-accordion") ->
-                listOf(providerRoot)
-
-            else -> providerRoot.select(
-                ".wp-block-ub-content-toggle-accordion"
-            ).ifEmpty {
-                providerRoot.children().filter {
-                    it.hasClass("wp-block-ub-content-toggle-accordion")
-                }
-            }
-        }
+    for ((episodeTitle, episodeContent, index) in entries) {
+        val providerAccordions = episodeContent.select(
+            ".wp-block-ub-content-toggle-accordion"
+        )
 
         val links = JSONArray()
         val seenUrls = mutableSetOf<String>()
 
-        for (providerAccordion in providerAccordions) {
-            val provider = providerAccordion.children()
-                .firstOrNull {
-                    it.hasClass("wp-block-ub-content-toggle-accordion-title-wrap")
-                }
-                ?.selectFirst(".wp-block-ub-content-toggle-accordion-title")
-                ?.text()?.trim()
-                ?.replace("Download Links", "")?.trim()
-                ?.ifBlank { null }
-                ?: "Download"
+        val providerEntries = if (providerAccordions.isNotEmpty()) {
+            providerAccordions.mapNotNull { accordion ->
+                val title = accordion.selectFirst(
+                    ".wp-block-ub-content-toggle-accordion-title"
+                )?.text()?.trim()
+                    ?.replace("Download Links", "")?.trim()
+                    ?.ifBlank { null } ?: "Download"
 
-            val providerContent = providerAccordion.children()
-                .firstOrNull {
-                    it.hasClass("wp-block-ub-content-toggle-accordion-content-wrap")
-                } ?: continue
+                val content = accordion.selectFirst(
+                    ".wp-block-ub-content-toggle-accordion-content-wrap"
+                ) ?: return@mapNotNull null
 
-            for (element in providerContent.select("a[href], [data-href], [data-url]")) {
+                title to content
+            }
+        } else {
+            listOf("Download" to episodeContent)
+        }
+
+        for ((provider, providerContent) in providerEntries) {
+            for (element in providerContent.select(
+                "a[href], [data-href], [data-url]"
+            )) {
                 val rawUrl = listOf(
                     element.attr("href"),
                     element.attr("data-href"),
@@ -547,6 +538,8 @@ private fun parseEpisodes(
                 ).firstOrNull { it.isNotBlank() } ?: continue
 
                 val link = absolute(rawUrl) ?: continue
+
+                if (!link.startsWith("http", true)) continue
                 if (!seenUrls.add(link)) continue
 
                 val linkName = element.text().trim()
@@ -563,6 +556,11 @@ private fun parseEpisodes(
                 )
             }
         }
+
+        Log.d(
+            "OnlyKDrama",
+            "$episodeTitle: ${links.length()} download links collected"
+        )
 
         if (links.length() == 0) continue
 
@@ -582,6 +580,11 @@ private fun parseEpisodes(
             description = plot
         })
     }
+
+    Log.d(
+        "OnlyKDrama",
+        "Total playable episode entries: ${results.size}"
+    )
 
     return results
 }

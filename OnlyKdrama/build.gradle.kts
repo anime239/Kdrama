@@ -27,7 +27,7 @@ cloudstream {
     language = "hi"
 
     // Random CC logo I found
-    iconUrl = "https://github.com/anime239/Kdrama/blob/main/icons/OnlyKdrama.png"
+    iconUrl = "https://raw.githubusercontent.com/anime239/Kdrama/refs/heads/main/icons/OnlyKdrama.png"
 }
 
 android {
