@@ -39,10 +39,43 @@ class OnlyKdrama : MainAPI() {
     )
 
     override val mainPage = mainPageOf(
-        "" to "Latest Releases",
+        "" to "New Releases",
+        "/drama/" to "TV Shows",
+        "/movies/" to "Movies",
+        "/genres/ongoing/" to "Ongoing",
+        "/genres/completed/" to "Completed",
+        "/genres/upcoming/" to "Upcoming",
+
+        // Drama Collections
         "/genres/koren-drama/" to "Korean Drama",
+        "/genres/chinese-drama/" to "Chinese Drama",
+        "/genres/japanese-drama/" to "Japanese Drama",
         "/genres/hindi-dubbed-drama/" to "Hindi Dubbed Drama",
-        "/genres/ongoing/" to "Ongoing Dramas"
+        "/genres/hindi-dubbed-movie/" to "Hindi Dubbed Movies",
+        "/genres/english-dubbed-drama/" to "English Dubbed Drama",
+        "/genres/english-dubbed-movie/" to "English Dubbed Movies",
+
+
+
+        // Popular Genres
+        "/genres/action/" to "Action",
+        "/genres/romance/" to "Romance",
+        "/genres/comedy/" to "Comedy",
+        "/genres/thriller/" to "Thriller",
+        "/genres/mystery/" to "Mystery",
+        "/genres/crime/" to "Crime",
+        "/genres/fantasy/" to "Fantasy",
+        "/genres/horror/" to "Horror",
+        "/genres/adventure/" to "Adventure",
+        "/genres/sci-fi/" to "Sci-Fi",
+        "/genres/supernatural/" to "Supernatural",
+        "/genres/historical/" to "Historical",
+        "/genres/family/" to "Family",
+        "/genres/psychological/" to "Psychological",
+        "/genres/animation/" to "Animation",
+        "/genres/martial-arts/" to "Martial Arts",
+        "/genres/war/" to "War",
+        "/genres/youth/" to "Youth"
     )
 
     private fun absolute(url: String?): String? {
@@ -450,66 +483,65 @@ class OnlyKdrama : MainAPI() {
 
 
 
-private fun parseMovieLinks(document: Document): String {
-    val root = document.selectFirst(
-        "#info .wp-content > .wp-block-ub-content-toggle-block"
-    ) ?: return JSONObject().put("links", JSONArray()).toString()
+    private fun parseMovieLinks(document: Document): String {
+        val root = document.selectFirst(
+            "#info .wp-content > .wp-block-ub-content-toggle-block"
+        ) ?: return JSONObject().put("links", JSONArray()).toString()
 
-    val links = JSONArray()
-    val seenUrls = mutableSetOf<String>()
+        val links = JSONArray()
+        val seenUrls = mutableSetOf<String>()
 
-    val providerAccordions = root.children().filter {
-        it.hasClass("wp-block-ub-content-toggle-accordion")
-    }
-
-    for (accordion in providerAccordions) {
-        val provider = accordion.selectFirst(
-            ".wp-block-ub-content-toggle-accordion-title"
-        )?.text()
-            ?.trim()
-            ?.replace(Regex("""(?i)\s*download\s*links\s*"""), "")
-            ?.trim()
-            ?.ifBlank { null }
-            ?: "Download"
-
-        val content = accordion.selectFirst(
-            ".wp-block-ub-content-toggle-accordion-content-wrap"
-        ) ?: continue
-
-        for (element in content.select(
-            "a[href], [data-href], [data-url]"
-        )) {
-            val rawUrl = listOf(
-                element.attr("href"),
-                element.attr("data-href"),
-                element.attr("data-url")
-            ).firstOrNull { it.isNotBlank() } ?: continue
-
-            val link = absolute(rawUrl) ?: continue
-
-            if (!link.startsWith("http", true)) continue
-            if (!seenUrls.add(link)) continue
-
-            val fileName = element.text()
-                .trim()
-                .ifBlank { element.attr("title").trim() }
-                .ifBlank { element.attr("aria-label").trim() }
-                .ifBlank { provider }
-
-            links.put(
-                JSONObject()
-                    .put("name", fileName)
-                    .put("url", link)
-                    .put("provider", provider)
-            )
+        val providerAccordions = root.children().filter {
+            it.hasClass("wp-block-ub-content-toggle-accordion")
         }
+
+        for (accordion in providerAccordions) {
+            val provider = accordion.selectFirst(
+                ".wp-block-ub-content-toggle-accordion-title"
+            )?.text()
+                ?.trim()
+                ?.replace(Regex("""(?i)\s*download\s*links\s*"""), "")
+                ?.trim()
+                ?.ifBlank { null }
+                ?: "Download"
+
+            val content = accordion.selectFirst(
+                ".wp-block-ub-content-toggle-accordion-content-wrap"
+            ) ?: continue
+
+            for (element in content.select(
+                "a[href], [data-href], [data-url]"
+            )) {
+                val rawUrl = listOf(
+                    element.attr("href"),
+                    element.attr("data-href"),
+                    element.attr("data-url")
+                ).firstOrNull { it.isNotBlank() } ?: continue
+
+                val link = absolute(rawUrl) ?: continue
+
+                if (!link.startsWith("http", true)) continue
+                if (!seenUrls.add(link)) continue
+
+                val fileName = element.text()
+                    .trim()
+                    .ifBlank { element.attr("title").trim() }
+                    .ifBlank { element.attr("aria-label").trim() }
+                    .ifBlank { provider }
+
+                links.put(
+                    JSONObject()
+                        .put("name", fileName)
+                        .put("url", link)
+                        .put("provider", provider)
+                )
+            }
+        }
+
+        return JSONObject()
+            .put("links", links)
+            .toString()
     }
-
-    return JSONObject()
-        .put("links", links)
-        .toString()
-}
-
 
 
     private fun parseEpisodes(
@@ -773,32 +805,32 @@ private fun parseMovieLinks(document: Document): String {
         val isMovie = url.contains("/movies/")
 
 
-if (isMovie) {
-    val movieData = parseMovieLinks(document)
+    if (isMovie) {
+        val movieData = parseMovieLinks(document)
 
-    val movieLinks = runCatching {
-        JSONObject(movieData).getJSONArray("links")
-    }.getOrNull()
+        val movieLinks = runCatching {
+            JSONObject(movieData).getJSONArray("links")
+        }.getOrNull()
 
-    if (movieLinks == null || movieLinks.length() == 0) {
-        throw ErrorLoadingException(
-            "No movie download links found on OnlyKDrama."
-        )
+        if (movieLinks == null || movieLinks.length() == 0) {
+            throw ErrorLoadingException(
+                "No movie download links found on OnlyKDrama."
+            )
+        }
+
+        return newMovieLoadResponse(
+            title,
+            url,
+            TvType.Movie,
+            movieData
+        ) {
+            posterUrl = poster
+            this.plot = plot
+            this.year = year
+            this.tags = tags
+            this.score = rating?.let { Score.from10(it) }
+        }
     }
-
-    return newMovieLoadResponse(
-        title,
-        url,
-        TvType.Movie,
-        movieData
-    ) {
-        posterUrl = poster
-        this.plot = plot
-        this.year = year
-        this.tags = tags
-        this.score = rating?.let { Score.from10(it) }
-    }
-}
 
 
         val episodes = parseEpisodes(
