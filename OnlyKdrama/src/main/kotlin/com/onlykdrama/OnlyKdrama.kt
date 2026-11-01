@@ -67,8 +67,8 @@ class OnlyKdrama : MainAPI() {
         val lower = html.lowercase()
         val document = response.document
 
-        val hasDramaLinks =
-            document.select("a[href*=/drama/]").isNotEmpty()
+        val hasDramaCards =
+            document.select("article.item").isNotEmpty()
 
         val hasCfChallengeToken =
             lower.contains("cf-chl-") ||
@@ -84,11 +84,11 @@ class OnlyKdrama : MainAPI() {
         val isChallenge =
             hasCfChallengeToken ||
                 hasVerificationText ||
-                (hasChallengePlatform && !hasDramaLinks)
+                (hasChallengePlatform && !hasDramaCards)
 
         Log.d(
             "OnlyKDrama",
-            "Response diagnostics: url=$url, htmlLength=${html.length}, dramaLinks=$hasDramaLinks, cfChallengeToken=$hasCfChallengeToken, verificationText=$hasVerificationText, challengePlatform=$hasChallengePlatform, isChallenge=$isChallenge"
+            "Response diagnostics: url=$url, htmlLength=${html.length}, dramaCards=$hasDramaCards, cfChallengeToken=$hasCfChallengeToken, verificationText=$hasVerificationText, challengePlatform=$hasChallengePlatform, isChallenge=$isChallenge"
         )
 
         if (isChallenge) {
@@ -98,89 +98,64 @@ class OnlyKdrama : MainAPI() {
             )
 
             throw ErrorLoadingException(
-                "OnlyKDrama returned a Cloudflare verification page. Check the plugin log for diagnostics."
+                "OnlyKDrama returned a Cloudflare verification page."
             )
         }
 
         return document
     }
 
-    private fun getImage(element: Element?): String? {
-        if (element == null) return null
+    private fun getPoster(article: Element): String? {
+        val image = article.selectFirst(".poster img") ?: return null
 
-        val image = element.selectFirst("img") ?: return null
-
-        val candidates = listOf(
-            image.attr("data-src"),
-            image.attr("data-lazy-src"),
-            image.attr("data-original"),
-            image.attr("data-image"),
-            image.attr("data-lazy"),
-            image.attr("data-srcset"),
-            image.attr("srcset"),
-            image.attr("src")
+        val attributes = listOf(
+            "src",
+            "data-src",
+            "data-lazy-src",
+            "data-original",
+            "data-image",
+            "data-lazy"
         )
 
-        for (candidate in candidates) {
-            if (candidate.isBlank()) continue
+        for (attribute in attributes) {
+            val value = image.attr(attribute).trim()
 
-            val selected = if (candidate.contains(",")) {
-                candidate.split(",")
-                    .last()
-                    .trim()
-                    .substringBefore(" ")
-            } else {
-                candidate.trim().substringBefore(" ")
+            if (value.isBlank() || value.startsWith("data:")) {
+                continue
             }
 
-            if (selected.startsWith("data:")) continue
-
-            absolute(selected)?.let {
-                return it
-            }
+            return absolute(value)
         }
 
         return null
     }
 
-    private fun getCard(link: Element): Element {
-        var current = link
-        var parent = link.parent()
+    private fun getDramaUrl(article: Element): String? {
+        val href = article.selectFirst(
+            ".poster a[href]"
+        )?.attr("href")
+            ?.takeIf { it.isNotBlank() }
+            ?: article.selectFirst(
+                ".data h3 a[href]"
+            )?.attr("href")
 
-        repeat(7) {
-            if (parent == null) return current
+        val url = absolute(href) ?: return null
 
-            if (
-                parent.selectFirst("img") != null &&
-                parent.select("a[href*=/drama/]").isNotEmpty()
-            ) {
-                current = parent
-            } else {
-                return current
-            }
-
-            parent = parent.parent()
+        return url.takeIf {
+            it.startsWith("$mainUrl/drama/")
         }
-
-        return current
     }
 
-    private fun getTitle(
-        link: Element,
-        card: Element
-    ): String {
-        return link.text().trim()
-            .ifBlank { link.attr("title").trim() }
-            .ifBlank { link.attr("aria-label").trim() }
-            .ifBlank {
-                card.selectFirst(
-                    "h1, h2, h3, h4, .entry-title, .title"
-                )?.text()?.trim().orEmpty()
-            }
-            .ifBlank {
-                card.selectFirst("img")
-                    ?.attr("alt")?.trim().orEmpty()
-            }
+    private fun getDramaTitle(article: Element): String {
+        return article.selectFirst(
+            ".data h3 a"
+        )?.text()?.trim()
+            ?.ifBlank { null }
+            ?: article.selectFirst(
+                ".poster img"
+            )?.attr("alt")?.trim()
+                ?.ifBlank { null }
+            ?: ""
     }
 
     private fun parseHome(
@@ -189,49 +164,39 @@ class OnlyKdrama : MainAPI() {
         val results = mutableListOf<SearchResponse>()
         val seen = mutableSetOf<String>()
 
-        for (link in document.select("a[href*=/drama/]")) {
-            val url = absolute(link.attr("href")) ?: continue
-
-            if (!url.startsWith("$mainUrl/")) continue
-
-            val path = url.removePrefix(mainUrl)
-                .substringBefore("?")
-                .substringBefore("#")
-
-            if (!path.startsWith("/drama/")) continue
-
-            val card = getCard(link)
-            val title = getTitle(link, card)
+        for (article in document.select("article.item")) {
+            val url = getDramaUrl(article) ?: continue
+            val title = getDramaTitle(article)
 
             if (title.isBlank()) continue
             if (!seen.add(url)) continue
 
-            val poster = getImage(card)
-                ?: getImage(link)
+            val poster = getPoster(article)
 
             val isMovie =
-                title.contains("movie", true) ||
+                article.hasClass("movies") ||
+                    title.contains("movie", true) ||
                     title.contains("film", true)
 
-            results.add(
-                if (isMovie) {
-                    newMovieSearchResponse(
-                        title,
-                        url,
-                        TvType.Movie
-                    ) {
-                        posterUrl = poster
-                    }
-                } else {
-                    newTvSeriesSearchResponse(
-                        title,
-                        url,
-                        TvType.TvSeries
-                    ) {
-                        posterUrl = poster
-                    }
+            val response = if (isMovie) {
+                newMovieSearchResponse(
+                    title,
+                    url,
+                    TvType.Movie
+                ) {
+                    posterUrl = poster
                 }
-            )
+            } else {
+                newTvSeriesSearchResponse(
+                    title,
+                    url,
+                    TvType.TvSeries
+                ) {
+                    posterUrl = poster
+                }
+            }
+
+            results.add(response)
         }
 
         Log.d(
@@ -247,6 +212,7 @@ class OnlyKdrama : MainAPI() {
         page: Int
     ): String {
         if (page <= 1) return base
+
         return "${base.trimEnd('/')}/page/$page/"
     }
 
@@ -291,7 +257,7 @@ class OnlyKdrama : MainAPI() {
 
         if (results.isEmpty()) {
             throw ErrorLoadingException(
-                "No drama titles found on OnlyKDrama. The page loaded, but its drama links could not be parsed."
+                "No drama cards found on OnlyKDrama. Check the response diagnostics."
             )
         }
 
