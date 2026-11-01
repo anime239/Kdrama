@@ -464,7 +464,7 @@ class OnlyKdrama : MainAPI() {
         document: Document,
         poster: String?,
         plot: String?
-    ): List<Episode> {
+        ): List<Episode> {
         val results = mutableListOf<Episode>()
 
         val episodeRoot = document.selectFirst(
@@ -477,8 +477,7 @@ class OnlyKdrama : MainAPI() {
             }
 
         for ((index, episodeAccordion) in episodeAccordions.withIndex()) {
-            val episodeTitle = episodeAccordion
-                .children()
+            val episodeTitle = episodeAccordion.children()
                 .firstOrNull {
                     it.hasClass("wp-block-ub-content-toggle-accordion-title-wrap")
                 }
@@ -492,7 +491,7 @@ class OnlyKdrama : MainAPI() {
                 .find(episodeTitle)
                 ?.value
                 ?.toIntOrNull()
-                ?: (index + 1)
+                ?: index + 1
 
             val episodeContent = episodeAccordion.children()
                 .firstOrNull {
@@ -501,25 +500,23 @@ class OnlyKdrama : MainAPI() {
                     )
                 } ?: continue
 
-            val providerRoot = episodeContent.children()
-                .firstOrNull {
-                    it.hasClass("wp-block-ub-content-toggle-block")
-                } ?: continue
+            val providerAccordions = episodeContent.select(
+                ".wp-block-ub-content-toggle-accordion"
+            )
 
             val links = JSONArray()
-
-            val providerAccordions = providerRoot.children()
-                .filter {
-                    it.hasClass("wp-block-ub-content-toggle-accordion")
-                }
+            val seenUrls = mutableSetOf<String>()
 
             for (providerAccordion in providerAccordions) {
-                val provider = providerAccordion
-                    .children()
+                val provider = providerAccordion.children()
                     .firstOrNull {
-                        it.hasClass("wp-block-ub-content-toggle-accordion-title-wrap")
+                        it.hasClass(
+                            "wp-block-ub-content-toggle-accordion-title-wrap"
+                        )
                     }
-                    ?.selectFirst(".wp-block-ub-content-toggle-accordion-title")
+                    ?.selectFirst(
+                        ".wp-block-ub-content-toggle-accordion-title"
+                    )
                     ?.text()
                     ?.trim()
                     ?.replace("Download Links", "")
@@ -534,11 +531,30 @@ class OnlyKdrama : MainAPI() {
                         )
                     } ?: continue
 
-                for (anchor in providerContent.select("a[href]")) {
-                    val link = absolute(anchor.attr("href")) ?: continue
-                    val linkName = anchor.text().trim()
+                val elements = providerContent.select(
+                    "a[href], [data-href], [data-url]"
+                )
 
-                    if (linkName.isBlank()) continue
+                for (element in elements) {
+                    val rawUrl = when {
+                        element.hasAttr("href") ->
+                            element.attr("href")
+
+                        element.hasAttr("data-href") ->
+                            element.attr("data-href")
+
+                        else ->
+                            element.attr("data-url")
+                    }
+
+                    val link = absolute(rawUrl) ?: continue
+                    if (!seenUrls.add(link)) continue
+
+                    val linkName = element.text().trim()
+                        .ifBlank { element.attr("title").trim() }
+                        .ifBlank { element.attr("aria-label").trim() }
+                        .ifBlank { element.parent()?.text()?.trim().orEmpty() }
+                        .ifBlank { provider }
 
                     links.put(
                         JSONObject()
@@ -564,6 +580,11 @@ class OnlyKdrama : MainAPI() {
                     posterUrl = poster
                     description = plot
                 }
+            )
+
+            Log.d(
+                "OnlyKDrama",
+                "$episodeTitle: ${links.length()} download links collected"
             )
         }
 
@@ -661,13 +682,18 @@ class OnlyKdrama : MainAPI() {
             )
 
             try {
+                var extracted = false
+
                 loadExtractor(
                     url,
                     mainUrl,
-                    subtitleCallback,
-                    callback
-                )
-                loaded = true
+                    subtitleCallback
+                ) { link ->
+                    extracted = true
+                    callback(link)
+                }
+
+                if (extracted) loaded = true
             } catch (e: Exception) {
                 Log.e(
                     "OnlyKDrama",
