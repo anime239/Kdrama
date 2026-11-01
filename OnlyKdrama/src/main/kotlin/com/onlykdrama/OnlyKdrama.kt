@@ -500,9 +500,17 @@ class OnlyKdrama : MainAPI() {
                     )
                 } ?: continue
 
-            val providerAccordions = episodeContent.select(
-                ".wp-block-ub-content-toggle-accordion"
-            )
+            val providerRoot = episodeContent.children()
+                .firstOrNull {
+                    it.hasClass("wp-block-ub-content-toggle-block")
+                } ?: episodeContent.selectFirst(
+                    ".wp-block-ub-content-toggle-block"
+                ) ?: continue
+
+            val providerAccordions = providerRoot.children()
+                .filter {
+                    it.hasClass("wp-block-ub-content-toggle-accordion")
+                }
 
             val links = JSONArray()
             val seenUrls = mutableSetOf<String>()
@@ -531,21 +539,16 @@ class OnlyKdrama : MainAPI() {
                         )
                     } ?: continue
 
-                val elements = providerContent.select(
-                    "a[href], [data-href], [data-url]"
-                )
-
-                for (element in elements) {
-                    val rawUrl = when {
-                        element.hasAttr("href") ->
-                            element.attr("href")
-
-                        element.hasAttr("data-href") ->
-                            element.attr("data-href")
-
-                        else ->
-                            element.attr("data-url")
-                    }
+                for (element in providerContent.select(
+                    "a, [data-href], [data-url]"
+                )) {
+                    val rawUrl = listOf(
+                        element.attr("href"),
+                        element.attr("data-href"),
+                        element.attr("data-url")
+                    ).firstOrNull {
+                        it.isNotBlank()
+                    } ?: continue
 
                     val link = absolute(rawUrl) ?: continue
                     if (!seenUrls.add(link)) continue
@@ -553,7 +556,9 @@ class OnlyKdrama : MainAPI() {
                     val linkName = element.text().trim()
                         .ifBlank { element.attr("title").trim() }
                         .ifBlank { element.attr("aria-label").trim() }
-                        .ifBlank { element.parent()?.text()?.trim().orEmpty() }
+                        .ifBlank {
+                            element.parent()?.text()?.trim().orEmpty()
+                        }
                         .ifBlank { provider }
 
                     links.put(
@@ -565,7 +570,13 @@ class OnlyKdrama : MainAPI() {
                 }
             }
 
-            if (links.length() == 0) continue
+            if (links.length() == 0) {
+                Log.w(
+                    "OnlyKDrama",
+                    "$episodeTitle: no download links found"
+                )
+                continue
+            }
 
             val episodeData = JSONObject()
                 .put("title", episodeTitle)
