@@ -8,6 +8,7 @@ import org.jsoup.nodes.Element
 import java.net.URLEncoder
 
 class OnlyKdrama : MainAPI() {
+
     override var mainUrl = "https://onlykdrama.shop"
     override var name = "OnlyKDrama"
     override var lang = "hi"
@@ -17,8 +18,7 @@ class OnlyKdrama : MainAPI() {
 
     override val supportedTypes = setOf(
         TvType.TvSeries,
-        TvType.Movie,
-        TvType.AsianDrama
+        TvType.Movie
     )
 
     private val headers = mapOf(
@@ -29,7 +29,7 @@ class OnlyKdrama : MainAPI() {
     )
 
     override val mainPage = mainPageOf(
-        "" to "New Releases",
+        "" to "Latest Releases",
         "/genres/koren-drama/" to "Korean Drama",
         "/genres/hindi-dubbed-drama/" to "Hindi Dubbed Drama",
         "/genres/ongoing/" to "Ongoing Dramas"
@@ -41,7 +41,8 @@ class OnlyKdrama : MainAPI() {
             ?.replace("&amp;", "&")
             ?: return null
 
-        if (value.isBlank() ||
+        if (
+            value.isBlank() ||
             value.startsWith("data:") ||
             value.startsWith("javascript:")
         ) return null
@@ -50,8 +51,11 @@ class OnlyKdrama : MainAPI() {
     }
 
     private suspend fun getDocument(url: String): Document {
-        val response = app.get(url, headers = headers)
-        val document = response.document
+        val response = app.get(
+            url,
+            headers = headers
+        )
+
         val html = response.text.lowercase()
 
         if (
@@ -61,11 +65,11 @@ class OnlyKdrama : MainAPI() {
             html.contains("verify you are human")
         ) {
             throw ErrorLoadingException(
-                "OnlyKDrama is asking for browser verification. Try again later or open the site in a browser."
+                "OnlyKDrama requires browser verification."
             )
         }
 
-        return document
+        return response.document
     }
 
     private fun imageFrom(element: Element?): String? {
@@ -77,137 +81,116 @@ class OnlyKdrama : MainAPI() {
             image.attr("data-src"),
             image.attr("data-lazy-src"),
             image.attr("data-original"),
+            image.attr("data-image"),
+            image.attr("data-lazy"),
             image.attr("data-srcset"),
             image.attr("srcset"),
-            image.attr("data-lazy"),
-            image.attr("src"),
-            image.attr("data-image")
+            image.attr("src")
         )
 
         for (candidate in candidates) {
             if (candidate.isBlank()) continue
 
-            val chosen = if (candidate.contains(",")) {
-                candidate.split(",").last()
+            val selected = if (candidate.contains(",")) {
+                candidate.split(",")
+                    .last()
                     .trim()
                     .substringBefore(" ")
             } else {
                 candidate.trim().substringBefore(" ")
             }
 
-            absolute(chosen)?.let { return it }
+            absolute(selected)?.let { return it }
         }
 
         return null
     }
 
-    private fun isContentUrl(rawUrl: String): Boolean {
-        val url = absolute(rawUrl) ?: return false
-
-        if (!url.startsWith(mainUrl)) return false
-
-        val path = url.removePrefix(mainUrl)
-            .substringBefore("?")
-            .substringBefore("#")
-
-        if (path.isBlank() || path == "/") return false
-
-        if (
-            path.contains("/genres/") ||
-            path.contains("/category/") ||
-            path.contains("/tag/") ||
-            path.contains("/page/") ||
-            path.contains("/wp-") ||
-            path.endsWith(".xml")
-        ) return false
-
-        return true
-    }
-
-    private fun cardTitle(card: Element, link: Element): String {
+    private fun cardTitle(
+        link: Element,
+        card: Element
+    ): String {
         return link.text().trim()
             .ifBlank { link.attr("title").trim() }
+            .ifBlank { link.attr("aria-label").trim() }
             .ifBlank {
-                card.selectFirst("h1, h2, h3, h4, .title, .entry-title")
-                    ?.text()?.trim().orEmpty()
+                card.selectFirst(
+                    "h1, h2, h3, h4, .title, .entry-title"
+                )?.text()?.trim().orEmpty()
             }
             .ifBlank {
-                card.selectFirst("img")?.attr("alt")?.trim().orEmpty()
+                card.selectFirst("img")
+                    ?.attr("alt")?.trim().orEmpty()
             }
     }
 
-    private fun parseCards(document: Document): List<SearchResponse> {
-        val output = mutableListOf<SearchResponse>()
+    private fun parseCards(
+        document: Document
+    ): List<SearchResponse> {
+
+        val results = mutableListOf<SearchResponse>()
         val seen = mutableSetOf<String>()
 
-        val containers = document.select(
-            "article, .post, .item, .movie, .result-item, .grid-item, .entry"
-        )
+        val links = document.select("a[href*=/drama/]")
 
-        val roots = if (containers.isNotEmpty()) {
-            containers
-        } else {
-            document.select("a[href]:has(img)")
-        }
-
-        for (root in roots) {
-            val anchors = if (root.tagName() == "a") {
-                listOf(root)
-            } else {
-                root.select("a[href]")
-            }
-
-            val link = anchors.firstOrNull {
-                isContentUrl(it.attr("href"))
-            } ?: continue
-
+        for (link in links) {
             val url = absolute(link.attr("href")) ?: continue
 
+            if (!url.startsWith("$mainUrl/")) continue
             if (!seen.add(url)) continue
 
-            val title = cardTitle(root, link)
+            val card = link.parents().firstOrNull {
+                it.selectFirst("img") != null
+            } ?: link
+
+            val title = cardTitle(link, card)
+
             if (title.isBlank()) continue
 
-            val poster = imageFrom(root) ?: imageFrom(link)
+            val poster = imageFrom(card)
+                ?: imageFrom(link)
 
-            val type = if (title.contains("movie", true)) {
-                TvType.Movie
-            } else {
-                TvType.TvSeries
-            }
+            val cardText = card.text()
 
-            output.add(
-                if (type == TvType.Movie) {
-                    newMovieSearchResponse(title, url, type) {
+            val isMovie =
+                title.contains("movie", true) ||
+                Regex("""\bMovie\b""", RegexOption.IGNORE_CASE)
+                    .containsMatchIn(cardText)
+
+            results.add(
+                if (isMovie) {
+                    newMovieSearchResponse(
+                        title,
+                        url,
+                        TvType.Movie
+                    ) {
                         posterUrl = poster
                     }
                 } else {
-                    newTvSeriesSearchResponse(title, url, type) {
+                    newTvSeriesSearchResponse(
+                        title,
+                        url,
+                        TvType.TvSeries
+                    ) {
                         posterUrl = poster
                     }
                 }
             )
         }
 
-        return output
+        return results
     }
 
-    private fun pageUrl(base: String, page: Int): String {
-        if (page <= 1) return base
-
-        return if (base.contains("?")) {
-            "$base&paged=$page"
-        } else {
-            "${base.trimEnd('/')}/page/$page/"
-        }
-    }
-
-    private fun hasNext(document: Document, page: Int): Boolean {
+    private fun hasNext(
+        document: Document,
+        page: Int
+    ): Boolean {
         return document.select("a[href]").any { anchor ->
+
             val href = anchor.attr("href")
 
             val nextPage = Regex(
-                "(?:/page/|[?&]paged=)(\\d+)",
+                """(?:/page/|[?&]paged=)(\d+)""",
                 RegexOption.IGNORE_CASE
             ).find(href)
                 ?.groupValues
@@ -217,8 +200,43 @@ class OnlyKdrama : MainAPI() {
             (nextPage != null && nextPage > page) ||
                 anchor.attr("rel").equals("next", true) ||
                 anchor.text().trim().equals("next", true) ||
-                anchor.text().trim() == "›" ||
-                anchor.text().trim() == "»"
+                anchor.text().trim().equals("next →", true) ||
+                anchor.text().trim() == "»" ||
+                anchor.text().trim() == "›"
+        }
+    }
+
+    private fun standardSearchUrl(
+        query: String,
+        page: Int
+    ): String {
+        val encoded = URLEncoder.encode(query.trim(), "UTF-8")
+
+        return if (page <= 1) {
+            "$mainUrl/?s=$encoded"
+        } else {
+            "$mainUrl/page/$page/?s=$encoded"
+        }
+    }
+
+    private fun advancedSearchUrl(
+        query: String,
+        page: Int
+    ): String {
+        val encoded = URLEncoder.encode(query.trim(), "UTF-8")
+
+        return buildString {
+            append("$mainUrl/advance-search/?q=$encoded")
+            append("&type=all")
+            append("&lang=")
+            append("&genre=")
+            append("&year=")
+            append("&min_rating=0")
+            append("&sort=latest")
+
+            if (page > 1) {
+                append("&paged=$page")
+            }
         }
     }
 
@@ -226,21 +244,29 @@ class OnlyKdrama : MainAPI() {
         page: Int,
         request: MainPageRequest
     ): HomePageResponse {
+
+        val pageNumber = page.coerceAtLeast(1)
+
         val base = if (request.data.isBlank()) {
             "$mainUrl/"
         } else {
             absolute(request.data) ?: "$mainUrl/"
         }
 
-        val document = getDocument(
-            pageUrl(base, page.coerceAtLeast(1))
-        )
+        val url = if (base.contains("?")) {
+            if (pageNumber == 1) base
+            else "$base&paged=$pageNumber"
+        } else {
+            if (pageNumber == 1) base
+            else "${base.trimEnd('/')}/page/$pageNumber/"
+        }
 
+        val document = getDocument(url)
         val results = parseCards(document)
 
         if (results.isEmpty()) {
             throw ErrorLoadingException(
-                "No titles found on OnlyKDrama. The site layout may have changed or the request was blocked."
+                "No titles found on OnlyKDrama."
             )
         }
 
@@ -250,7 +276,7 @@ class OnlyKdrama : MainAPI() {
                 results,
                 isHorizontalImages = false
             ),
-            hasNext = hasNext(document, page)
+            hasNext = hasNext(document, pageNumber)
         )
     }
 
@@ -258,14 +284,47 @@ class OnlyKdrama : MainAPI() {
         query: String,
         page: Int
     ): Pair<List<SearchResponse>, Boolean> {
-        val encoded = URLEncoder.encode(query.trim(), "UTF-8")
 
-        val url = "$mainUrl/?s=$encoded" +
-            if (page > 1) "&paged=$page" else ""
+        val pageNumber = page.coerceAtLeast(1)
 
-        val document = getDocument(url)
+        var standardDocument: Document? = null
 
-        return parseCards(document) to hasNext(document, page)
+        try {
+            standardDocument = getDocument(
+                standardSearchUrl(query, pageNumber)
+            )
+
+            val results = parseCards(standardDocument)
+
+            if (results.isNotEmpty()) {
+                return results to hasNext(
+                    standardDocument,
+                    pageNumber
+                )
+            }
+        } catch (_: Exception) {
+        }
+
+        try {
+            val advancedDocument = getDocument(
+                advancedSearchUrl(query, pageNumber)
+            )
+
+            val results = parseCards(advancedDocument)
+
+            return results to hasNext(
+                advancedDocument,
+                pageNumber
+            )
+        } catch (e: Exception) {
+            if (standardDocument != null) {
+                return emptyList<SearchResponse>() to false
+            }
+
+            throw ErrorLoadingException(
+                "OnlyKDrama search failed: ${e.message}"
+            )
+        }
     }
 
     override suspend fun search(
@@ -277,10 +336,11 @@ class OnlyKdrama : MainAPI() {
     override suspend fun search(
         query: String,
         page: Int
-    ): SearchResponseList {
+    ): SearchResponseList? {
+
         val (results, next) = searchResults(
             query,
-            page.coerceAtLeast(1)
+            page
         )
 
         return newSearchResponseList(
@@ -295,111 +355,125 @@ class OnlyKdrama : MainAPI() {
         return searchResults(query, 1).first
     }
 
-    private fun sectionText(
-        document: Document,
-        headingText: String
+    private fun getPoster(
+        document: Document
     ): String? {
-        val heading = document.select("h1, h2, h3, h4, strong, b")
-            .firstOrNull {
-                it.text().trim().equals(headingText, true)
-            } ?: return null
 
-        val next = heading.nextElementSibling()
-            ?: heading.parent()?.nextElementSibling()
-
-        return next?.text()?.trim()?.takeIf {
-            it.isNotBlank()
-        }
-    }
-
-    private fun getPlot(document: Document): String? {
-        return sectionText(document, "Synopsis")
-            ?: document.selectFirst("meta[property=og:description]")
-                ?.attr("content")?.trim()
-            ?: document.selectFirst("meta[name=description]")
-                ?.attr("content")?.trim()
-    }
-
-    private fun getPoster(document: Document): String? {
-        return document.selectFirst("meta[property=og:image]")
-            ?.attr("content")
+        return document.selectFirst(
+            "meta[property=og:image]"
+        )?.attr("content")
             ?.let { absolute(it) }
             ?: imageFrom(
                 document.selectFirst(
-                    ".poster, .entry-content, article, .post, main"
+                    ".poster, .entry-content, article, main"
                 )
             )
     }
 
-    override suspend fun load(url: String): LoadResponse {
+    private fun getPlot(
+        document: Document
+    ): String? {
+
+        val synopsis = document.selectFirst(
+            "h1, h2, h3, h4"
+        ) {
+            it.text().trim().equals("Synopsis", true)
+        }
+
+        val synopsisText = synopsis
+            ?.nextElementSibling()
+            ?.text()
+            ?.trim()
+
+        return synopsisText?.takeIf {
+            it.isNotBlank()
+        } ?: document.selectFirst(
+            "meta[property=og:description]"
+        )?.attr("content")?.trim()
+            ?: document.selectFirst(
+                "meta[name=description]"
+            )?.attr("content")?.trim()
+    }
+
+    override suspend fun load(
+        url: String
+    ): LoadResponse {
+
         val pageUrl = absolute(url)
-            ?: throw ErrorLoadingException("Invalid OnlyKDrama URL")
+            ?: throw ErrorLoadingException("Invalid URL")
 
         val document = getDocument(pageUrl)
 
         val title = document.selectFirst(
             "h1.entry-title, h1"
         )?.text()?.trim()
-            ?: document.selectFirst("meta[property=og:title]")
-                ?.attr("content")?.trim()
+            ?: document.selectFirst(
+                "meta[property=og:title]"
+            )?.attr("content")?.trim()
             ?: throw ErrorLoadingException(
-                "Could not read the title from OnlyKDrama"
+                "Title not found."
             )
 
         val plot = getPlot(document)
+        val poster = getPoster(document)
 
-        val year = Regex("\\b(19|20)\\d{2}\\b")
+        val year = Regex("""\b(19|20)\d{2}\b""")
             .find(title)?.value?.toIntOrNull()
-            ?: Regex("\\b(19|20)\\d{2}\\b")
+            ?: Regex("""\b(19|20)\d{2}\b""")
                 .find(document.text())?.value?.toIntOrNull()
 
         val tags = document.select(
-            "a[rel=tag], .genres a, a[href*='/genres/']"
+            "a[rel=tag], a[href*='/genres/']"
         )
             .map { it.text().trim() }
-            .filter { it.isNotBlank() && it.length < 40 }
+            .filter {
+                it.isNotBlank() &&
+                    it.length < 40
+            }
             .distinct()
 
-        val type = if (title.contains("movie", true)) {
-            TvType.Movie
-        } else {
-            TvType.TvSeries
-        }
+        val isMovie = title.contains(
+            "movie",
+            ignoreCase = true
+        )
 
-        val episode = newEpisode(pageUrl) {
-            name = "Available Episodes / Links"
-            season = 1
-            episode = 1
-        }
-
-        return if (type == TvType.Movie) {
-            newMovieLoadResponse(
+        if (isMovie) {
+            return newMovieLoadResponse(
                 title,
                 pageUrl,
                 TvType.Movie,
                 pageUrl
             ) {
-                posterUrl = getPoster(document)
-                this.plot = plot
-                this.year = year
-                this.tags = tags
-            }
-        } else {
-            newTvSeriesLoadResponse(
-                title,
-                pageUrl,
-                TvType.TvSeries,
-                listOf(episode)
-            ) {
-                posterUrl = getPoster(document)
+                posterUrl = poster
                 this.plot = plot
                 this.year = year
                 this.tags = tags
             }
         }
+
+        val episode = newEpisode(pageUrl) {
+            name = "Available Episodes"
+            season = 1
+            episode = 1
+        }
+
+        return newTvSeriesLoadResponse(
+            title,
+            pageUrl,
+            TvType.TvSeries,
+            listOf(episode)
+        ) {
+            posterUrl = poster
+            this.plot = plot
+            this.year = year
+            this.tags = tags
+        }
     }
 
-    private fun isDownloadLink(url: String): Boolean {
+    private fun isDownloadLink(
+        url: String
+    ): Boolean {
+
         val host = url.substringAfter("//")
             .substringBefore("/")
             .substringBefore(":")
@@ -408,14 +482,15 @@ class OnlyKdrama : MainAPI() {
         return listOf(
             "hubcloud",
             "xcloud",
+            "gdflix",
+            "gdrive",
             "drive.google",
             "gofile",
             "mega.nz",
             "pixeldrain",
             "terabox",
-            "gdflix",
-            "hubdrive",
             "filepress",
+            "hubdrive",
             "streamtape",
             "mixdrop",
             "streamwish"
@@ -428,24 +503,27 @@ class OnlyKdrama : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
+
         val pageUrl = absolute(data) ?: return false
 
         val document = getDocument(pageUrl)
 
-        val content = document.select(
+        val content = document.selectFirst(
             ".entry-content, .post-content, article, main"
-        ).firstOrNull() ?: document
+        ) ?: document
 
         val links = content.select("a[href]")
             .mapNotNull {
                 absolute(it.attr("href"))
             }
-            .filter { isDownloadLink(it) }
+            .filter {
+                isDownloadLink(it)
+            }
             .distinct()
 
         if (links.isEmpty()) {
             throw ErrorLoadingException(
-                "No supported episode/download links were found on this title page."
+                "No supported download links found."
             )
         }
 
