@@ -51,11 +51,7 @@ class OnlyKdrama : MainAPI() {
     }
 
     private suspend fun getDocument(url: String): Document {
-        val response = app.get(
-            url,
-            headers = headers
-        )
-
+        val response = app.get(url, headers = headers)
         val html = response.text.lowercase()
 
         if (
@@ -131,31 +127,37 @@ class OnlyKdrama : MainAPI() {
         val results = mutableListOf<SearchResponse>()
         val seen = mutableSetOf<String>()
 
-        val links = document.select("a[href*=/drama/]")
-
-        for (link in links) {
+        for (link in document.select("a[href*=/drama/]")) {
             val url = absolute(link.attr("href")) ?: continue
 
             if (!url.startsWith("$mainUrl/")) continue
             if (!seen.add(url)) continue
 
-            val card = link.parents().firstOrNull {
-                it.selectFirst("img") != null
-            } ?: link
+            var card = link
+            var parent = link.parent()
+
+            var depth = 0
+            while (parent != null && depth < 6) {
+                if (parent.selectFirst("img") != null) {
+                    card = parent
+                    break
+                }
+
+                parent = parent.parent()
+                depth++
+            }
 
             val title = cardTitle(link, card)
-
             if (title.isBlank()) continue
 
-            val poster = imageFrom(card)
-                ?: imageFrom(link)
-
-            val cardText = card.text()
+            val poster = imageFrom(card) ?: imageFrom(link)
 
             val isMovie =
                 title.contains("movie", true) ||
-                Regex("""\bMovie\b""", RegexOption.IGNORE_CASE)
-                    .containsMatchIn(cardText)
+                Regex(
+                    """\bMovie\b""",
+                    RegexOption.IGNORE_CASE
+                ).containsMatchIn(card.text())
 
             results.add(
                 if (isMovie) {
@@ -200,7 +202,6 @@ class OnlyKdrama : MainAPI() {
             (nextPage != null && nextPage > page) ||
                 anchor.attr("rel").equals("next", true) ||
                 anchor.text().trim().equals("next", true) ||
-                anchor.text().trim().equals("next →", true) ||
                 anchor.text().trim() == "»" ||
                 anchor.text().trim() == "›"
         }
@@ -338,10 +339,7 @@ class OnlyKdrama : MainAPI() {
         page: Int
     ): SearchResponseList? {
 
-        val (results, next) = searchResults(
-            query,
-            page
-        )
+        val (results, next) = searchResults(query, page)
 
         return newSearchResponseList(
             results,
@@ -358,7 +356,6 @@ class OnlyKdrama : MainAPI() {
     private fun getPoster(
         document: Document
     ): String? {
-
         return document.selectFirst(
             "meta[property=og:image]"
         )?.attr("content")
@@ -374,13 +371,16 @@ class OnlyKdrama : MainAPI() {
         document: Document
     ): String? {
 
-        val synopsis = document.selectFirst(
+        val heading = document.select(
             "h1, h2, h3, h4"
-        ) {
-            it.text().trim().equals("Synopsis", true)
+        ).firstOrNull {
+            it.text().trim().equals(
+                "Synopsis",
+                ignoreCase = true
+            )
         }
 
-        val synopsisText = synopsis
+        val synopsisText = heading
             ?.nextElementSibling()
             ?.text()
             ?.trim()
@@ -390,9 +390,11 @@ class OnlyKdrama : MainAPI() {
         } ?: document.selectFirst(
             "meta[property=og:description]"
         )?.attr("content")?.trim()
+            ?.takeIf { it.isNotBlank() }
             ?: document.selectFirst(
                 "meta[name=description]"
             )?.attr("content")?.trim()
+                ?.takeIf { it.isNotBlank() }
     }
 
     override suspend fun load(
@@ -427,8 +429,7 @@ class OnlyKdrama : MainAPI() {
         )
             .map { it.text().trim() }
             .filter {
-                it.isNotBlank() &&
-                    it.length < 40
+                it.isNotBlank() && it.length < 40
             }
             .distinct()
 
@@ -470,9 +471,7 @@ class OnlyKdrama : MainAPI() {
         }
     }
 
-    private fun isDownloadLink(
-        url: String
-    ): Boolean {
+    private fun isDownloadLink(url: String): Boolean {
 
         val host = url.substringAfter("//")
             .substringBefore("/")
