@@ -18,7 +18,7 @@ class OnlyKdrama : MainAPI() {
     override val supportedTypes = setOf(
         TvType.TvSeries,
         TvType.Movie,
-        TvType.AsianDramas
+        TvType.AsianDrama
     )
 
     private val headers = mapOf(
