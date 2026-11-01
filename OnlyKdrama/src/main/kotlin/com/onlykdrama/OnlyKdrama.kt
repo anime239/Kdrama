@@ -10,14 +10,15 @@ import java.net.URLEncoder
 class OnlyKdrama : MainAPI() {
     override var mainUrl = "https://onlykdrama.shop"
     override var name = "OnlyKDrama"
-    override var lang = "en"
+    override var lang = "hi"
 
     override val hasMainPage = true
     override val hasQuickSearch = true
 
     override val supportedTypes = setOf(
         TvType.TvSeries,
-        TvType.Movie
+        TvType.Movie,
+        TvType.AsianDramas
     )
 
     private val headers = mapOf(
