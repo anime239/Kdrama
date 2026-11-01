@@ -9,6 +9,13 @@ import org.json.JSONObject
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import java.net.URLEncoder
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
+import java.util.concurrent.atomic.AtomicBoolean
 
 class OnlyKdrama : MainAPI() {
 
@@ -622,52 +629,80 @@ class OnlyKdrama : MainAPI() {
         }
     }
 
-    override suspend fun loadLinks(
-        data: String,
-        isCasting: Boolean,
-        subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        val links = runCatching {
-            JSONObject(data).getJSONArray("links")
-        }.getOrNull() ?: return false
+override suspend fun loadLinks(
+    data: String,
+    isCasting: Boolean,
+    subtitleCallback: (SubtitleFile) -> Unit,
+    callback: (ExtractorLink) -> Unit
+): Boolean {
+    val links = runCatching {
+        JSONObject(data).getJSONArray("links")
+    }.getOrNull() ?: return false
 
-        var loaded = false
+    val tasks = mutableListOf<Triple<String, String, String>>()
+    val seenUrls = mutableSetOf<String>()
 
-        for (index in 0 until links.length()) {
-            val item = links.optJSONObject(index) ?: continue
-            val url = item.optString("url")
-            val provider = item.optString("provider")
-            val fileName = item.optString("name")
+    for (index in 0 until links.length()) {
+        val item = links.optJSONObject(index) ?: continue
 
-            if (url.isBlank()) continue
+        val url = item.optString("url").trim()
+        val provider = item.optString("provider")
+        val fileName = item.optString("name")
 
-            Log.d(
-                "OnlyKDrama",
-                "Extracting provider=$provider; file=$fileName; url=$url"
-            )
+        if (url.isBlank() || !seenUrls.add(url)) continue
 
-            try {
-                var extracted = false
-
-                loadExtractor(
-                    url,
-                    mainUrl,
-                    subtitleCallback
-                ) { link ->
-                    extracted = true
-                    callback(link)
-                }
-
-                if (extracted) loaded = true
-            } catch (e: Exception) {
-                Log.e(
-                    "OnlyKDrama",
-                    "Extractor failed: provider=$provider; file=$fileName; ${e.message}"
-                )
-            }
-        }
-
-        return loaded
+        tasks.add(Triple(url, provider, fileName))
     }
+
+    if (tasks.isEmpty()) return false
+
+    val semaphore = Semaphore(3)
+    val callbackLock = Any()
+    val loaded = AtomicBoolean(false)
+
+    coroutineScope {
+        tasks.map { (url, provider, fileName) ->
+            async {
+                semaphore.withPermit {
+                    try {
+                        Log.d(
+                            "OnlyKDrama",
+                            "Extracting provider=$provider; file=$fileName"
+                        )
+
+                        loadExtractor(
+                            url,
+                            mainUrl,
+                            { subtitle ->
+                                synchronized(callbackLock) {
+                                    subtitleCallback(subtitle)
+                                }
+                            }
+                        ) { link ->
+                            synchronized(callbackLock) {
+                                loaded.set(true)
+                                callback(link)
+                            }
+                        }
+
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        Log.e(
+                            "OnlyKDrama",
+                            "Extractor failed: provider=$provider; file=$fileName; ${e.message}"
+                        )
+                    }
+                }
+            }
+        }.awaitAll()
+    }
+
+    Log.d(
+        "OnlyKDrama",
+        "Extraction completed: ${tasks.size} provider links processed; success=${loaded.get()}"
+    )
+
+    return loaded.get()
+}
 }
