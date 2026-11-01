@@ -267,7 +267,7 @@ class OnlyKdrama : MainAPI() {
     override suspend fun search(
         query: String
     ): List<SearchResponse> {
-        return search(query, 1).results
+        return search(query, 1)
     }
 
     override suspend fun search(
