@@ -525,6 +525,7 @@ private fun parseEpisodes(
     plot: String?
     ): List<Episode> {
     val results = mutableListOf<Episode>()
+
     val contentRoot = document.selectFirst("#info .wp-content")
         ?: return results
 
@@ -532,117 +533,7 @@ private fun parseEpisodes(
     val titleSelector = ".wp-block-ub-content-toggle-accordion-title"
     val contentSelector = ".wp-block-ub-content-toggle-accordion-content-wrap"
 
-    val accordions = contentRoot.select(accordionSelector)
-
-    val episodePattern = Regex(
-        """(?i)\bS(\d{1,2})\s*E(\d{1,3})\b"""
-    )
-
-    val groupedLinks = linkedMapOf<Pair<Int, Int>, JSONArray>()
-    val groupedNames = linkedMapOf<Pair<Int, Int>, String>()
-    val seen = mutableSetOf<String>()
-
-    for (accordion in accordions) {
-        val title = accordion.selectFirst(titleSelector)
-            ?.text()?.trim().orEmpty()
-
-        val content = accordion.selectFirst(contentSelector)
-            ?: continue
-
-        val provider = title
-            .ifBlank { "Download" }
-            .replace(Regex("(?i)download links"), "")
-            .trim()
-
-        for (element in content.select("a[href], [data-href], [data-url]")) {
-            val rawUrl = listOf(
-                element.attr("href"),
-                element.attr("data-href"),
-                element.attr("data-url")
-            ).firstOrNull { it.isNotBlank() } ?: continue
-
-            val link = absolute(rawUrl) ?: continue
-            if (!link.startsWith("http", true)) continue
-
-            val fileName = element.text().trim()
-                .ifBlank { element.attr("title").trim() }
-                .ifBlank { element.attr("aria-label").trim() }
-                .ifBlank { element.parent()?.text()?.trim().orEmpty() }
-
-            val match = episodePattern.find(fileName)
-                ?: continue
-
-            val season = match.groupValues[1].toIntOrNull() ?: 1
-            val episode = match.groupValues[2].toIntOrNull() ?: continue
-            val key = season to episode
-
-            if (!seen.add("$key|$link")) continue
-
-            val links = groupedLinks.getOrPut(key) {
-                JSONArray()
-            }
-
-            links.put(
-                JSONObject()
-                    .put("name", fileName.ifBlank { provider })
-                    .put("url", link)
-                    .put("provider", provider)
-            )
-
-            if (!groupedNames.containsKey(key)) {
-                val rawName = fileName
-                    .replace('.', ' ')
-                    .replace('_', ' ')
-
-                val episodeTitle = rawName
-                    .substringAfter(match.value, "")
-                    .replace(
-                        Regex(
-                            """(?i)\b(480p|540p|720p|1080p|2160p|NF|WEB.?DL|BluRay|HDRip|x264|x265|AV1|HEVC|10bit|AAC|DDP|H264|H265)\b.*"""
-                        ),
-                        ""
-                    )
-                    .trim(' ', '-', '_', '.', '[', ']')
-
-                groupedNames[key] = episodeTitle
-                    .ifBlank { "Episode $episode" }
-            }
-        }
-    }
-
-    if (groupedLinks.isNotEmpty()) {
-        for ((key, links) in groupedLinks) {
-            val (season, episode) = key
-            val episodeTitle = groupedNames[key] ?: "Episode $episode"
-
-            val data = JSONObject()
-                .put("title", episodeTitle)
-                .put("links", links)
-                .toString()
-
-            results.add(newEpisode(data) {
-                name = episodeTitle
-                this.season = season
-                this.episode = episode
-                posterUrl = poster
-                description = plot?.take(180)?.let {
-                    if (plot.length > 180) {
-                        "${it.substringBeforeLast(" ")}..."
-                    } else {
-                        it
-                    }
-                }
-            })
-        }
-
-        return results.sortedWith(
-            compareBy<Episode> { it.season ?: 1 }
-                .thenBy { it.episode ?: 1 }
-        )
-    }
-
-    // Existing nested-accordion fallback
-    val allAccordions = accordions
+    val allAccordions = contentRoot.select(accordionSelector)
 
     val episodeAccordions = allAccordions.filter { accordion ->
         val content = accordion.selectFirst(contentSelector)
@@ -651,14 +542,16 @@ private fun parseEpisodes(
 
     val entries = if (episodeAccordions.isNotEmpty()) {
         episodeAccordions.mapIndexedNotNull { index, accordion ->
-            val episodeTitle = accordion.selectFirst(titleSelector)
-                ?.text()?.trim()?.ifBlank { null }
+            val title = accordion.selectFirst(titleSelector)
+                ?.text()
+                ?.trim()
+                ?.ifBlank { null }
                 ?: "Episode ${index + 1}"
 
             val content = accordion.selectFirst(contentSelector)
                 ?: return@mapIndexedNotNull null
 
-            Triple(episodeTitle, content, index + 1)
+            Triple(title, content, index + 1)
         }
     } else {
         listOf(Triple("Episode 1", contentRoot, 1))
@@ -666,14 +559,16 @@ private fun parseEpisodes(
 
     for ((episodeTitle, episodeContent, index) in entries) {
         val providerAccordions = episodeContent.select(accordionSelector)
+
         val links = JSONArray()
         val seenUrls = mutableSetOf<String>()
 
         val providers = if (providerAccordions.isNotEmpty()) {
             providerAccordions.mapNotNull { accordion ->
                 val provider = accordion.selectFirst(titleSelector)
-                    ?.text()?.trim()
-                    ?.replace("Download Links", "")
+                    ?.text()
+                    ?.trim()
+                    ?.replace(Regex("(?i)download links"), "")
                     ?.trim()
                     ?.ifBlank { null }
                     ?: "Download"
@@ -698,6 +593,7 @@ private fun parseEpisodes(
                 ).firstOrNull { it.isNotBlank() } ?: continue
 
                 val link = absolute(rawUrl) ?: continue
+
                 if (!link.startsWith("http", true)) continue
                 if (!seenUrls.add(link)) continue
 
@@ -716,17 +612,25 @@ private fun parseEpisodes(
             }
         }
 
+        Log.d(
+            "OnlyKDrama",
+            "$episodeTitle: ${links.length()} download links collected"
+        )
+
         if (links.length() == 0) continue
 
         val episodeNumber = Regex("[0-9]+")
-            .find(episodeTitle)?.value?.toIntOrNull() ?: index
+            .find(episodeTitle)
+            ?.value
+            ?.toIntOrNull()
+            ?: index
 
-        val data = JSONObject()
+        val episodeData = JSONObject()
             .put("title", episodeTitle)
             .put("links", links)
             .toString()
 
-        results.add(newEpisode(data) {
+        results.add(newEpisode(episodeData) {
             name = episodeTitle
             season = 1
             episode = episodeNumber
@@ -740,6 +644,11 @@ private fun parseEpisodes(
             }
         })
     }
+
+    Log.d(
+        "OnlyKDrama",
+        "Total episode entries: ${results.size}"
+    )
 
     return results
 }
@@ -817,8 +726,8 @@ private fun parseEpisodes(
             JSONObject(data).getJSONArray("links")
         }.getOrNull() ?: return false
 
-        val tasks = mutableListOf<Triple<String, String, String>>()
         val seenUrls = mutableSetOf<String>()
+        var loaded = false
 
         for (index in 0 until links.length()) {
             val item = links.optJSONObject(index) ?: continue
@@ -829,58 +738,47 @@ private fun parseEpisodes(
 
             if (url.isBlank() || !seenUrls.add(url)) continue
 
-            tasks.add(Triple(url, provider, fileName))
-        }
+            var callbackCount = 0
 
-        if (tasks.isEmpty()) return false
+            try {
+                Log.d("OnlyKDrama", "START provider=$provider")
+                Log.d("OnlyKDrama", "URL=$url")
 
-        val semaphore = Semaphore(7)
-        val callbackLock = Any()
-        val loaded = AtomicBoolean(false)
-
-        coroutineScope {
-            tasks.map { (url, provider, fileName) ->
-                async {
-                    semaphore.withPermit {
-                        try {
-                            Log.d(
-                                "OnlyKDrama",
-                                "Extracting provider=$provider; file=$fileName"
-                            )
-
-                            loadExtractor(
-                                url,
-                                mainUrl,
-                                { subtitle ->
-                                    synchronized(callbackLock) {
-                                        subtitleCallback(subtitle)
-                                    }
-                                }
-                            ) { link ->
-                                synchronized(callbackLock) {
-                                    loaded.set(true)
-                                    callback(link)
-                                }
-                            }
-
-                        } catch (e: CancellationException) {
-                            throw e
-                        } catch (e: Exception) {
-                            Log.e(
-                                "OnlyKDrama",
-                                "Extractor failed: provider=$provider; file=$fileName; ${e.message}"
-                            )
-                        }
+                val matched = loadExtractor(
+                    url,
+                    mainUrl,
+                    { subtitle ->
+                        subtitleCallback(subtitle)
                     }
+                ) { link ->
+                    callbackCount++
+                    loaded = true
+
+                    Log.d(
+                        "OnlyKDrama",
+                        "LINK FOUND provider=$provider name=${link.name} url=${link.url}"
+                    )
+
+                    callback(link)
                 }
-            }.awaitAll()
+
+                Log.d(
+                    "OnlyKDrama",
+                    "RESULT provider=$provider matched=$matched callbacks=$callbackCount"
+                )
+
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.e(
+                    "OnlyKDrama",
+                    "FAILED provider=$provider file=$fileName url=$url error=${e.message}"
+                )
+            }
         }
 
-        Log.d(
-            "OnlyKDrama",
-            "Extraction completed: ${tasks.size} provider links processed; success=${loaded.get()}"
-        )
+        Log.d("OnlyKDrama", "FINAL success=$loaded")
 
-        return loaded.get()
+        return loaded
     }
 }
