@@ -146,17 +146,14 @@ class OnlyKdrama : MainAPI() {
 
     private fun getDramaUrl(article: Element): String? {
         val href = article.selectFirst(
-            ".poster a[href]"
+            ".poster a[href], .data h3 a[href]"
         )?.attr("href")
-            ?.takeIf { it.isNotBlank() }
-            ?: article.selectFirst(
-                ".data h3 a[href]"
-            )?.attr("href")
 
         val url = absolute(href) ?: return null
 
         return url.takeIf {
-            it.startsWith("$mainUrl/drama/")
+            it.startsWith("$mainUrl/drama/") ||
+                it.startsWith("$mainUrl/movies/")
         }
     }
 
@@ -174,7 +171,7 @@ class OnlyKdrama : MainAPI() {
 
     private fun parseHome(
         document: Document
-    ): List<SearchResponse> {
+        ): List<SearchResponse> {
         val results = mutableListOf<SearchResponse>()
         val seen = mutableSetOf<String>()
 
@@ -182,41 +179,26 @@ class OnlyKdrama : MainAPI() {
             val url = getDramaUrl(article) ?: continue
             val title = getDramaTitle(article)
 
-            if (title.isBlank()) continue
-            if (!seen.add(url)) continue
+            if (title.isBlank() || !seen.add(url)) continue
 
             val poster = getPoster(article)
-
-            val isMovie =
+            val isMovie = url.contains("/movies/") ||
                 article.hasClass("movies") ||
-                    title.contains("movie", true) ||
-                    title.contains("film", true)
+                title.contains("movie", true) ||
+                title.contains("film", true)
 
             val response = if (isMovie) {
-                newMovieSearchResponse(
-                    title,
-                    url,
-                    TvType.Movie
-                ) {
+                newMovieSearchResponse(title, url, TvType.Movie) {
                     posterUrl = poster
                 }
             } else {
-                newTvSeriesSearchResponse(
-                    title,
-                    url,
-                    TvType.TvSeries
-                ) {
+                newTvSeriesSearchResponse(title, url, TvType.TvSeries) {
                     posterUrl = poster
                 }
             }
 
             results.add(response)
         }
-
-        Log.d(
-            "OnlyKDrama",
-            "Homepage parsing completed: ${results.size} titles found"
-        )
 
         return results
     }
@@ -248,7 +230,7 @@ class OnlyKdrama : MainAPI() {
 
     private fun parseSearch(
         document: Document
-    ): List<SearchResponse> {
+        ): List<SearchResponse> {
         val results = mutableListOf<SearchResponse>()
         val seen = mutableSetOf<String>()
 
@@ -258,15 +240,8 @@ class OnlyKdrama : MainAPI() {
             ) ?: continue
 
             val url = absolute(link.attr("href")) ?: continue
-
-            if (!url.startsWith("$mainUrl/")) continue
-
-            val path = url.removePrefix(mainUrl)
-                .substringBefore("?")
-                .substringBefore("#")
-
-            val isMovie = path.startsWith("/movies/")
-            val isDrama = path.startsWith("/drama/")
+            val isMovie = url.contains("/movies/")
+            val isDrama = url.contains("/drama/")
 
             if (!isMovie && !isDrama) continue
             if (!seen.add(url)) continue
@@ -283,19 +258,11 @@ class OnlyKdrama : MainAPI() {
             val poster = getSearchPoster(card)
 
             val response = if (isMovie) {
-                newMovieSearchResponse(
-                    title,
-                    url,
-                    TvType.Movie
-                ) {
+                newMovieSearchResponse(title, url, TvType.Movie) {
                     posterUrl = poster
                 }
             } else {
-                newTvSeriesSearchResponse(
-                    title,
-                    url,
-                    TvType.TvSeries
-                ) {
+                newTvSeriesSearchResponse(title, url, TvType.TvSeries) {
                     posterUrl = poster
                 }
             }
@@ -303,29 +270,33 @@ class OnlyKdrama : MainAPI() {
             results.add(response)
         }
 
+        if (results.isEmpty()) {
+            results.addAll(parseHome(document))
+        }
+
         Log.d(
             "OnlyKDrama",
-            "Search completed: ${results.size} results found"
+            "Advanced search completed: ${results.size} results found"
         )
 
         return results
     }
 
-override suspend fun search(
-    query: String
-): List<SearchResponse> {
-    val encodedQuery = URLEncoder.encode(
-        query.trim(),
-        "UTF-8"
-    )
+    override suspend fun search(
+        query: String
+        ): List<SearchResponse> {
+        val encodedQuery = URLEncoder.encode(
+            query.trim(),
+            "UTF-8"
+        )
 
-    val url = "$mainUrl/advance-search/?q=$encodedQuery&type=all&lang=&genre=&year=&min_rating=0&sort=latest"
+        val url = "$mainUrl/advance-search/?q=$encodedQuery&type=all&lang=&genre=&year=&min_rating=0&sort=latest"
 
-    Log.d("OnlyKDrama", "Advanced search URL: $url")
+        Log.d("OnlyKDrama", "Advanced search URL: $url")
 
-    val document = getDocument(url)
-    return parseSearch(document)
-}
+        val document = getDocument(url)
+        return parseSearch(document)
+    }
 
     private fun getPageUrl(
         base: String,
