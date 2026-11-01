@@ -7,7 +7,8 @@ import android.content.Context
 import android.graphics.Color
 import android.net.Uri
 import android.net.http.SslError
-import android.util.Log
+import android.os.Handler
+import android.os.Looper
 import android.view.Gravity
 import android.view.KeyEvent
 import android.view.View
@@ -25,8 +26,10 @@ import android.widget.TextView
 
 object OnlyKdramaWebView {
 
-    private const val TAG = "OnlyKDramaWebView"
     const val HOME_URL = "https://onlykdrama.shop/"
+
+    private const val CHECK_INTERVAL = 1500L
+    private const val MAX_CHECKS = 180
 
     fun hasSiteCookies(): Boolean {
         return CookieManager.getInstance()
@@ -40,35 +43,26 @@ object OnlyKdramaWebView {
         onDone: (() -> Unit)? = null
     ) {
         val manager = CookieManager.getInstance()
-        val cookies = manager.getCookie(HOME_URL).orEmpty()
 
-        cookies.split(";")
-            .map { it.substringBefore("=").trim() }
-            .filter { it.isNotBlank() }
-            .distinct()
-            .forEach { name ->
-                manager.setCookie(
-                    HOME_URL,
-                    "$name=; Max-Age=0; path=/"
-                )
-            }
-
-        manager.flush()
-        OnlyKdramaSession.clear(context)
-        onDone?.invoke()
+        manager.removeAllCookies {
+            manager.flush()
+            OnlyKdramaSession.clear(context)
+            onDone?.invoke()
+        }
     }
 
     @SuppressLint("SetJavaScriptEnabled")
-    fun open(context: Context) {
-
+    fun open(
+        context: Context,
+        onClosed: (() -> Unit)? = null
+    ) {
         OnlyKdramaSession.initialize(context)
 
         val cookieManager = CookieManager.getInstance()
         cookieManager.setAcceptCookie(true)
 
         val density = context.resources.displayMetrics.density
-
-        fun dp(value: Int): Int = (value * density).toInt()
+        fun dp(value: Int) = (value * density).toInt()
 
         val header = TextView(context).apply {
             text = "OnlyKDrama Verification"
@@ -80,7 +74,7 @@ object OnlyKdramaWebView {
         }
 
         val status = TextView(context).apply {
-            text = "Open the website and complete verification if requested."
+            text = "Checking website security automatically..."
             textSize = 13f
             setTextColor(Color.WHITE)
             gravity = Gravity.CENTER_VERTICAL
@@ -94,7 +88,6 @@ object OnlyKdramaWebView {
             android.R.attr.progressBarStyleHorizontal
         ).apply {
             max = 100
-            progress = 0
         }
 
         val webView = WebView(context).apply {
@@ -114,7 +107,8 @@ object OnlyKdramaWebView {
             loadWithOverviewMode = true
             javaScriptCanOpenWindowsAutomatically = true
             setSupportMultipleWindows(false)
-            mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+            mixedContentMode =
+                WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
             cacheMode = WebSettings.LOAD_DEFAULT
             allowFileAccess = false
             allowContentAccess = true
@@ -122,85 +116,134 @@ object OnlyKdramaWebView {
             displayZoomControls = false
         }
 
-        fun saveSession() {
-            val currentUrl = webView.url.orEmpty()
+        val handler = Handler(Looper.getMainLooper())
 
-            if (!currentUrl.startsWith(HOME_URL)) {
-                status.text = "Open OnlyKDrama homepage before saving."
+        lateinit var dialog: AlertDialog
+
+        var cleaned = false
+        var saved = false
+        var checks = 0
+
+        fun saveVerifiedSession() {
+            if (saved || cleaned) return
+
+            val currentUrl = webView.url.orEmpty()
+            val host = runCatching {
+                Uri.parse(currentUrl).host
+            }.getOrNull()
+
+            if (host != Uri.parse(HOME_URL).host) return
+
+            cookieManager.flush()
+
+            val cookies = cookieManager.getCookie(HOME_URL)
+            val hasClearance = cookies.orEmpty()
+                .split(";")
+                .any {
+                    it.trim().substringBefore("=")
+                        .equals("cf_clearance", true) &&
+                    it.contains("=")
+                }
+
+            if (!hasClearance) {
+                status.text =
+                    "Verification finished. Waiting for Cloudflare clearance cookie..."
                 return
             }
 
-            status.text = "Checking website page..."
+            val userAgent = webView.settings.userAgentString
 
-            webView.evaluateJavascript(
-                """
-                (function() {
-                    var html = document.documentElement
-                        ? document.documentElement.innerHTML.toLowerCase()
-                        : "";
-                    var body = document.body
-                        ? document.body.innerText.toLowerCase()
-                        : "";
-                    var challenge =
-                        html.includes("cf-chl-") ||
-                        html.includes("challenge-platform") ||
-                        body.includes("just a moment") ||
-                        body.includes("verify you are human");
-                    var dramas = document.querySelectorAll(
-                        'a[href*="/drama/"]'
-                    ).length;
-                    return !challenge && dramas > 0;
-                })();
-                """.trimIndent()
-            ) { result ->
-
-                if (result != "true") {
-                    status.text =
-                        "Verification is not complete or drama listings are not visible. Finish loading the homepage, then try SAVE SESSION again."
-                    Log.d(TAG, "Session not saved: page verification failed")
-                    return@evaluateJavascript
-                }
-
-                cookieManager.flush()
-
-                val cookies = cookieManager.getCookie(HOME_URL)
-                val userAgent = webView.settings.userAgentString
-
-                if (cookies.isNullOrBlank()) {
-                    status.text = "No website cookies found."
-                    Log.d(TAG, "Session not saved: no cookies")
-                    return@evaluateJavascript
-                }
-
-                val saved = OnlyKdramaSession.save(
+            if (
+                !OnlyKdramaSession.save(
                     context,
                     cookies,
                     userAgent
                 )
+            ) {
+                status.text = "Session saving failed. Retrying..."
+                return
+            }
 
-                if (!saved) {
-                    status.text = "Unable to save session. Try again."
-                    return@evaluateJavascript
+            saved = true
+            OnlyKdramaVerification.sessionVerified()
+
+            status.text = "Verification complete. Session saved automatically."
+
+            handler.postDelayed({
+                if (!cleaned && dialog.isShowing) {
+                    dialog.dismiss()
                 }
-                OnlyKdramaVerification.sessionVerified()
+            }, 700L)
+        }
 
-                val hasClearance = OnlyKdramaSession
-                    .hasCloudflareClearance(context)
+        val autoCheck = object : Runnable {
 
-                status.text = if (hasClearance) {
-                    "Session saved. Cloudflare clearance cookie detected. Close and retry CloudStream."
-                } else {
-                    "Session saved, but cf_clearance was not found. CloudStream may still be blocked."
+            override fun run() {
+                if (cleaned || saved || !dialog.isShowing) return
+
+                checks++
+
+                if (checks > MAX_CHECKS) {
+                    status.text =
+                        "Verification is taking longer than expected. Complete the website check and wait."
+                    return
                 }
 
-                Log.d(
-                    TAG,
-                    "Verified page session saved; cf_clearance=$hasClearance"
-                )
+                val host = runCatching {
+                    Uri.parse(webView.url.orEmpty()).host
+                }.getOrNull()
+
+                if (host != Uri.parse(HOME_URL).host) {
+                    handler.postDelayed(this, CHECK_INTERVAL)
+                    return
+                }
+
+                webView.evaluateJavascript(
+                    """
+                    (function() {
+                        var html = document.documentElement
+                            ? document.documentElement.innerHTML.toLowerCase()
+                            : "";
+
+                        var body = document.body
+                            ? document.body.innerText.toLowerCase()
+                            : "";
+
+                        var challenge =
+                            html.includes("cf-chl-") ||
+                            html.includes("challenge-platform") ||
+                            body.includes("just a moment") ||
+                            body.includes("checking your browser") ||
+                            body.includes("verify you are human");
+
+                        var ready =
+                            document.readyState === "complete" &&
+                            body.length > 100;
+
+                        return ready && !challenge;
+                    })();
+                    """.trimIndent()
+                ) { result ->
+
+                    if (cleaned || saved) return@evaluateJavascript
+
+                    if (result == "true") {
+                        saveVerifiedSession()
+
+                        if (!saved) {
+                            handler.postDelayed(this, CHECK_INTERVAL)
+                        }
+                    } else {
+                        status.text =
+                            "Waiting for Cloudflare verification..."
+                        handler.postDelayed(this, CHECK_INTERVAL)
+                    }
+                }
             }
         }
 
         webView.webChromeClient = object : WebChromeClient() {
+
             override fun onProgressChanged(
                 view: WebView?,
                 newProgress: Int
@@ -229,12 +272,12 @@ object OnlyKdramaWebView {
                 cookieManager.flush()
                 progress.visibility = View.GONE
 
-                status.text =
-                    "Page loaded. Complete verification if shown, then press SAVE SESSION."
+                if (!saved) {
+                    status.text =
+                        "Checking verification automatically..."
 
-                view?.post {
-                    view.requestLayout()
-                    view.invalidate()
+                    handler.removeCallbacks(autoCheck)
+                    handler.postDelayed(autoCheck, 1000L)
                 }
             }
 
@@ -244,7 +287,8 @@ object OnlyKdramaWebView {
                 error: android.webkit.WebResourceError?
             ) {
                 if (request?.isForMainFrame == true) {
-                    status.text = "Connection error: ${error?.description}"
+                    status.text =
+                        "Connection error: ${error?.description}"
                 }
             }
 
@@ -255,14 +299,13 @@ object OnlyKdramaWebView {
             ) {
                 handler?.cancel()
                 status.text = "Secure connection failed."
-                Log.e(TAG, "SSL error: $error")
             }
 
             override fun shouldOverrideUrlLoading(
                 view: WebView?,
                 request: WebResourceRequest?
             ): Boolean {
-                val uri: Uri = request?.url ?: return false
+                val uri = request?.url ?: return false
                 return uri.scheme != "https" && uri.scheme != "http"
             }
         }
@@ -274,25 +317,32 @@ object OnlyKdramaWebView {
             setPadding(dp(3), dp(3), dp(3), dp(3))
         }
 
-        fun makeButton(label: String): Button {
-            return Button(context).apply {
-                text = label
-                isAllCaps = false
-                minHeight = dp(48)
-                minimumHeight = dp(48)
-                textSize = 11f
-            }
+        fun makeButton(label: String) = Button(context).apply {
+            text = label
+            isAllCaps = false
+            minHeight = dp(48)
+            minimumHeight = dp(48)
+            textSize = 11f
         }
 
         val back = makeButton("BACK")
         val refresh = makeButton("REFRESH")
-        val save = makeButton("SAVE SESSION")
         val close = makeButton("CLOSE")
 
-        controls.addView(back, LinearLayout.LayoutParams(0, dp(54), 1f))
-        controls.addView(refresh, LinearLayout.LayoutParams(0, dp(54), 1f))
-        controls.addView(save, LinearLayout.LayoutParams(0, dp(54), 1.2f))
-        controls.addView(close, LinearLayout.LayoutParams(0, dp(54), 1f))
+        controls.addView(
+            back,
+            LinearLayout.LayoutParams(0, dp(54), 1f)
+        )
+
+        controls.addView(
+            refresh,
+            LinearLayout.LayoutParams(0, dp(54), 1f)
+        )
+
+        controls.addView(
+            close,
+            LinearLayout.LayoutParams(0, dp(54), 1f)
+        )
 
         val content = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
@@ -305,33 +355,36 @@ object OnlyKdramaWebView {
             addView(controls, LinearLayout.LayoutParams(-1, dp(60)))
         }
 
-        val dialog = AlertDialog.Builder(context)
+        dialog = AlertDialog.Builder(context)
             .setView(content)
             .create()
 
-        var cleaned = false
-
         fun cleanup() {
             if (cleaned) return
+
             cleaned = true
+
+            handler.removeCallbacks(autoCheck)
             cookieManager.flush()
+
             webView.stopLoading()
             webView.loadUrl("about:blank")
             webView.removeAllViews()
             webView.destroy()
+
+            onClosed?.invoke()
         }
 
         back.setOnClickListener {
-            if (webView.canGoBack()) webView.goBack()
+            if (webView.canGoBack()) {
+                webView.goBack()
+            }
         }
 
         refresh.setOnClickListener {
+            checks = 0
             status.text = "Refreshing website..."
             webView.reload()
-        }
-
-        save.setOnClickListener {
-            saveSession()
         }
 
         close.setOnClickListener {
@@ -363,7 +416,9 @@ object OnlyKdramaWebView {
         val metrics = context.resources.displayMetrics
 
         dialog.window?.apply {
-            setBackgroundDrawableResource(android.R.color.transparent)
+            setBackgroundDrawableResource(
+                android.R.color.transparent
+            )
             setGravity(Gravity.CENTER)
             setLayout(
                 metrics.widthPixels - dp(24),
