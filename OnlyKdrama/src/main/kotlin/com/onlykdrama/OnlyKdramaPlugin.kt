@@ -14,50 +14,43 @@ class OnlyKdramaPlugin : Plugin() {
         registerMainAPI(OnlyKdrama())
 
         openSettings = { ctx ->
+            val hasCookies = OnlyKdramaWebView.hasSiteCookies()
 
-            fun showSettings() {
-                val hasCookies = OnlyKdramaWebView.hasSiteCookies()
-
-                val status = if (hasCookies) {
-                    "Browser session: Cookies stored"
-                } else {
-                    "Browser session: No cookies stored"
-                }
-
-                AlertDialog.Builder(ctx)
-                    .setTitle("OnlyKDrama · Cloudflare Protection")
-                    .setMessage(
-                        "$status\n\n" +
-                        "If OnlyKDrama displays a security verification page, " +
-                        "open the website below and complete the verification manually.\n\n" +
-                        "Browser cookies are stored by Android WebView. " +
-                        "They are not automatically shared with CloudStream requests."
-                    )
-                    .setPositiveButton("BYPASS CLOUDFLARE") { _, _ ->
-                        try {
-                            OnlyKdramaWebView.open(ctx)
-                        } catch (e: Exception) {
-                            Toast.makeText(
-                                ctx,
-                                "Unable to open browser: ${e.message}",
-                                Toast.LENGTH_LONG
-                            ).show()
-                        }
-                    }
-                    .setNeutralButton("CLEAR COOKIES") { _, _ ->
-                        OnlyKdramaWebView.clearSiteCookies(ctx) {
-                            Toast.makeText(
-                                ctx,
-                                "Browser cookies cleared",
-                                Toast.LENGTH_SHORT
-                            ).show()
-                        }
-                    }
-                    .setNegativeButton("CLOSE", null)
-                    .show()
+            val status = if (hasCookies) {
+                "Browser session: Cookies stored"
+            } else {
+                "Browser session: No cookies stored"
             }
 
-            showSettings()
+            AlertDialog.Builder(ctx)
+                .setTitle("OnlyKDrama Settings")
+                .setMessage(
+                    "$status\n\n" +
+                    "Complete website verification in the browser if required.\n\n" +
+                    "WebView cookies are not automatically shared with CloudStream HTTP requests."
+                )
+                .setPositiveButton("OPEN WEBSITE") { _, _ ->
+                    try {
+                        OnlyKdramaWebView.open(ctx)
+                    } catch (e: Exception) {
+                        Toast.makeText(
+                            ctx,
+                            "Unable to open website: ${e.message}",
+                            Toast.LENGTH_LONG
+                        ).show()
+                    }
+                }
+                .setNeutralButton("CLEAR COOKIES") { _, _ ->
+                    OnlyKdramaWebView.clearSiteCookies(ctx) {
+                        Toast.makeText(
+                            ctx,
+                            "Cookies cleared",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    }
+                }
+                .setNegativeButton("CLOSE", null)
+                .show()
         }
     }
 }
