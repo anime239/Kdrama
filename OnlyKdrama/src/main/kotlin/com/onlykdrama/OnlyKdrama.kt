@@ -21,17 +21,17 @@ class OnlyKdrama : MainAPI() {
     )
 
     private val headers = mapOf(
-        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+        "User-Agent" to "Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Mobile Safari/537.36",
         "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
         "Accept-Language" to "en-US,en;q=0.9",
         "Referer" to "$mainUrl/"
     )
 
     override val mainPage = mainPageOf(
-        "" to "नए रिलीज़",
-        "/genres/koren-drama/" to "कोरियन ड्रामा",
-        "/genres/hindi-dubbed-drama/" to "हिंदी डब्ड ड्रामा",
-        "/genres/ongoing/" to "जारी ड्रामा"
+        "" to "Latest Releases",
+        "/genres/koren-drama/" to "Korean Drama",
+        "/genres/hindi-dubbed-drama/" to "Hindi Dubbed Drama",
+        "/genres/ongoing/" to "Ongoing Dramas"
     )
 
     private fun absolute(url: String?): String? {
@@ -50,21 +50,27 @@ class OnlyKdrama : MainAPI() {
     }
 
     private suspend fun getDocument(url: String): Document {
+
+        val requestHeaders = OnlyKdramaSession.headers(headers)
+
         val response = app.get(
             url,
-            headers = headers
+            headers = requestHeaders
         )
 
-        val html = response.text.lowercase()
+        val html = response.text
+        val lower = html.lowercase()
 
         if (
-            html.contains("cf-chl-") ||
-            html.contains("challenge-platform") ||
-            html.contains("just a moment") ||
-            html.contains("verify you are human")
+            lower.contains("cf-chl-") ||
+            lower.contains("challenge-platform") ||
+            lower.contains("just a moment") ||
+            lower.contains("verify you are human")
         ) {
             throw ErrorLoadingException(
-                "OnlyKDrama requires browser verification."
+                "OnlyKDrama verification is required. " +
+                    "Open OnlyKDrama settings, complete website verification, " +
+                    "press SAVE SESSION and retry."
             )
         }
 
@@ -110,10 +116,11 @@ class OnlyKdrama : MainAPI() {
     }
 
     private fun getCard(link: Element): Element {
-        var current: Element = link
+        var current = link
+        var parent = link.parent()
 
         repeat(7) {
-            val parent = current.parent() ?: return current
+            if (parent == null) return current
 
             if (
                 parent.selectFirst("img") != null &&
@@ -123,6 +130,8 @@ class OnlyKdrama : MainAPI() {
             } else {
                 return current
             }
+
+            parent = parent.parent()
         }
 
         return current
@@ -132,14 +141,9 @@ class OnlyKdrama : MainAPI() {
         link: Element,
         card: Element
     ): String {
-
-        val title = link.text().trim()
-            .ifBlank {
-                link.attr("title").trim()
-            }
-            .ifBlank {
-                link.attr("aria-label").trim()
-            }
+        return link.text().trim()
+            .ifBlank { link.attr("title").trim() }
+            .ifBlank { link.attr("aria-label").trim() }
             .ifBlank {
                 card.selectFirst(
                     "h1, h2, h3, h4, .entry-title, .title"
@@ -149,8 +153,6 @@ class OnlyKdrama : MainAPI() {
                 card.selectFirst("img")
                     ?.attr("alt")?.trim().orEmpty()
             }
-
-        return title
     }
 
     private fun parseHome(
@@ -167,6 +169,8 @@ class OnlyKdrama : MainAPI() {
             if (!url.startsWith("$mainUrl/")) continue
 
             val path = url.removePrefix(mainUrl)
+                .substringBefore("?")
+                .substringBefore("#")
 
             if (!path.startsWith("/drama/")) continue
 
@@ -174,27 +178,21 @@ class OnlyKdrama : MainAPI() {
             val title = getTitle(link, card)
 
             if (title.isBlank()) continue
-
             if (!seen.add(url)) continue
 
             val poster = getImage(card)
                 ?: getImage(link)
 
-            val type = if (
+            val isMovie =
                 title.contains("movie", true) ||
-                title.contains("film", true)
-            ) {
-                TvType.Movie
-            } else {
-                TvType.TvSeries
-            }
+                    title.contains("film", true)
 
             results.add(
-                if (type == TvType.Movie) {
+                if (isMovie) {
                     newMovieSearchResponse(
                         title,
                         url,
-                        type
+                        TvType.Movie
                     ) {
                         posterUrl = poster
                     }
@@ -202,7 +200,7 @@ class OnlyKdrama : MainAPI() {
                     newTvSeriesSearchResponse(
                         title,
                         url,
-                        type
+                        TvType.TvSeries
                     ) {
                         posterUrl = poster
                     }
@@ -217,12 +215,9 @@ class OnlyKdrama : MainAPI() {
         base: String,
         page: Int
     ): String {
-
         if (page <= 1) return base
 
-        val cleanBase = base.trimEnd('/')
-
-        return "$cleanBase/page/$page/"
+        return "${base.trimEnd('/')}/page/$page/"
     }
 
     private fun hasNextPage(
@@ -260,8 +255,7 @@ class OnlyKdrama : MainAPI() {
         val base = if (request.data.isBlank()) {
             "$mainUrl/"
         } else {
-            absolute(request.data)
-                ?: "$mainUrl/"
+            absolute(request.data) ?: "$mainUrl/"
         }
 
         val url = getPageUrl(
@@ -270,12 +264,11 @@ class OnlyKdrama : MainAPI() {
         )
 
         val document = getDocument(url)
-
         val results = parseHome(document)
 
         if (results.isEmpty()) {
             throw ErrorLoadingException(
-                "No drama titles found. Website layout or request may have changed."
+                "No drama titles found on OnlyKDrama."
             )
         }
 
