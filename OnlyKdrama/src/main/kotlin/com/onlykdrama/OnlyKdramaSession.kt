@@ -78,6 +78,16 @@ object OnlyKdramaSession {
         return cookieNames(cookies)
     }
 
+    fun savedCookieNamesForLog(): List<String> {
+        val context = appContext ?: return emptyList()
+        return savedCookieNames(context)
+    }
+
+    fun hasCloudflareClearanceForLog(): Boolean {
+        val context = appContext ?: return false
+        return hasCloudflareClearance(context)
+    }
+
     fun headers(
         original: Map<String, String>
     ): Map<String, String> {
