@@ -478,9 +478,11 @@ class OnlyKdrama : MainAPI() {
 
         for ((index, episodeAccordion) in episodeAccordions.withIndex()) {
             val episodeTitle = episodeAccordion
-                .selectFirst(
-                    ":scope > .wp-block-ub-content-toggle-accordion-title-wrap .wp-block-ub-content-toggle-accordion-title"
-                )
+                .children()
+                .firstOrNull {
+                    it.hasClass("wp-block-ub-content-toggle-accordion-title-wrap")
+                }
+                ?.selectFirst(".wp-block-ub-content-toggle-accordion-title")
                 ?.text()
                 ?.trim()
                 ?.ifBlank { null }
@@ -513,13 +515,16 @@ class OnlyKdrama : MainAPI() {
 
             for (providerAccordion in providerAccordions) {
                 val provider = providerAccordion
-                    .selectFirst(
-                        ":scope > .wp-block-ub-content-toggle-accordion-title-wrap .wp-block-ub-content-toggle-accordion-title"
-                    )
+                    .children()
+                    .firstOrNull {
+                        it.hasClass("wp-block-ub-content-toggle-accordion-title-wrap")
+                    }
+                    ?.selectFirst(".wp-block-ub-content-toggle-accordion-title")
                     ?.text()
                     ?.trim()
                     ?.replace("Download Links", "")
                     ?.trim()
+                    ?.ifBlank { null }
                     ?: "Download"
 
                 val providerContent = providerAccordion.children()
