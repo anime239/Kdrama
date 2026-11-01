@@ -404,10 +404,16 @@ class OnlyKdrama : MainAPI() {
                 ?.equals("Synopsis", true) == true
         } ?: return null
 
-        return synopsisBox.selectFirst(".wp-content")
-            ?.text()
-            ?.trim()
-            ?.ifBlank { null }
+        val content = synopsisBox.selectFirst(".wp-content") ?: return null
+
+        val synopsis = content.select("p")
+            .map { it.text().trim() }
+            .firstOrNull { it.isNotBlank() }
+            ?: content.ownText().trim()
+
+        return synopsis
+            .replace(Regex("\\s+"), " ")
+            .ifBlank { null }
     }
 
     private fun getTags(document: Document): List<String> {
@@ -557,7 +563,9 @@ class OnlyKdrama : MainAPI() {
                 season = 1
                 episode = episodeNumber
                 posterUrl = poster
-                description = plot
+                description = plot?.take(180)?.let {
+                    if (plot.length > 180) "${it.substringBeforeLast(" ")}..." else it
+                }
             })
         }
 
@@ -629,80 +637,80 @@ class OnlyKdrama : MainAPI() {
         }
     }
 
-override suspend fun loadLinks(
-    data: String,
-    isCasting: Boolean,
-    subtitleCallback: (SubtitleFile) -> Unit,
-    callback: (ExtractorLink) -> Unit
-): Boolean {
-    val links = runCatching {
-        JSONObject(data).getJSONArray("links")
-    }.getOrNull() ?: return false
+    override suspend fun loadLinks(
+        data: String,
+        isCasting: Boolean,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+        ): Boolean {
+        val links = runCatching {
+            JSONObject(data).getJSONArray("links")
+        }.getOrNull() ?: return false
 
-    val tasks = mutableListOf<Triple<String, String, String>>()
-    val seenUrls = mutableSetOf<String>()
+        val tasks = mutableListOf<Triple<String, String, String>>()
+        val seenUrls = mutableSetOf<String>()
 
-    for (index in 0 until links.length()) {
-        val item = links.optJSONObject(index) ?: continue
+        for (index in 0 until links.length()) {
+            val item = links.optJSONObject(index) ?: continue
 
-        val url = item.optString("url").trim()
-        val provider = item.optString("provider")
-        val fileName = item.optString("name")
+            val url = item.optString("url").trim()
+            val provider = item.optString("provider")
+            val fileName = item.optString("name")
 
-        if (url.isBlank() || !seenUrls.add(url)) continue
+            if (url.isBlank() || !seenUrls.add(url)) continue
 
-        tasks.add(Triple(url, provider, fileName))
-    }
+            tasks.add(Triple(url, provider, fileName))
+        }
 
-    if (tasks.isEmpty()) return false
+        if (tasks.isEmpty()) return false
 
-    val semaphore = Semaphore(3)
-    val callbackLock = Any()
-    val loaded = AtomicBoolean(false)
+        val semaphore = Semaphore(7)
+        val callbackLock = Any()
+        val loaded = AtomicBoolean(false)
 
-    coroutineScope {
-        tasks.map { (url, provider, fileName) ->
-            async {
-                semaphore.withPermit {
-                    try {
-                        Log.d(
-                            "OnlyKDrama",
-                            "Extracting provider=$provider; file=$fileName"
-                        )
+        coroutineScope {
+            tasks.map { (url, provider, fileName) ->
+                async {
+                    semaphore.withPermit {
+                        try {
+                            Log.d(
+                                "OnlyKDrama",
+                                "Extracting provider=$provider; file=$fileName"
+                            )
 
-                        loadExtractor(
-                            url,
-                            mainUrl,
-                            { subtitle ->
+                            loadExtractor(
+                                url,
+                                mainUrl,
+                                { subtitle ->
+                                    synchronized(callbackLock) {
+                                        subtitleCallback(subtitle)
+                                    }
+                                }
+                            ) { link ->
                                 synchronized(callbackLock) {
-                                    subtitleCallback(subtitle)
+                                    loaded.set(true)
+                                    callback(link)
                                 }
                             }
-                        ) { link ->
-                            synchronized(callbackLock) {
-                                loaded.set(true)
-                                callback(link)
-                            }
-                        }
 
-                    } catch (e: CancellationException) {
-                        throw e
-                    } catch (e: Exception) {
-                        Log.e(
-                            "OnlyKDrama",
-                            "Extractor failed: provider=$provider; file=$fileName; ${e.message}"
-                        )
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            Log.e(
+                                "OnlyKDrama",
+                                "Extractor failed: provider=$provider; file=$fileName; ${e.message}"
+                            )
+                        }
                     }
                 }
-            }
-        }.awaitAll()
+            }.awaitAll()
+        }
+
+        Log.d(
+            "OnlyKDrama",
+            "Extraction completed: ${tasks.size} provider links processed; success=${loaded.get()}"
+        )
+
+        return loaded.get()
     }
-
-    Log.d(
-        "OnlyKDrama",
-        "Extraction completed: ${tasks.size} provider links processed; success=${loaded.get()}"
-    )
-
-    return loaded.get()
-}
 }
