@@ -1,6 +1,7 @@
 
 package com.onlykdrama
 
+import android.util.Log
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import org.jsoup.nodes.Document
@@ -53,6 +54,11 @@ class OnlyKdrama : MainAPI() {
 
         val requestHeaders = OnlyKdramaSession.headers(headers)
 
+        Log.d(
+            "OnlyKDrama",
+            "Requesting $url; savedCookies=${OnlyKdramaSession.savedCookieNamesForLog()}"
+        )
+
         val response = app.get(
             url,
             headers = requestHeaders
@@ -61,18 +67,33 @@ class OnlyKdrama : MainAPI() {
         val html = response.text
         val lower = html.lowercase()
 
-        if (
-            lower.contains("cf-chl-") ||
-            lower.contains("challenge-platform") ||
-            lower.contains("just a moment") ||
-            lower.contains("verify you are human")
-        ) {
+        val challengeMarkers = listOf(
+            "cf-chl-",
+            "challenge-platform",
+            "just a moment",
+            "verify you are human"
+        )
+
+        val foundMarkers = challengeMarkers.filter {
+            lower.contains(it)
+        }
+
+        if (foundMarkers.isNotEmpty()) {
+            Log.e(
+                "OnlyKDrama",
+                "Challenge response. URL=$url; markers=$foundMarkers; title=${response.document.title()}; savedCookieNames=${OnlyKdramaSession.savedCookieNamesForLog()}; cf_clearance=${OnlyKdramaSession.hasCloudflareClearanceForLog()}"
+            )
+
             throw ErrorLoadingException(
-                "OnlyKDrama verification is required. " +
-                    "Open OnlyKDrama settings, complete website verification, " +
-                    "press SAVE SESSION and retry."
+                "OnlyKDrama returned a verification page. " +
+                    "Check the plugin log for cookie diagnostics."
             )
         }
+
+        Log.d(
+            "OnlyKDrama",
+            "Page received. URL=$url; title=${response.document.title()}; htmlLength=${html.length}"
+        )
 
         return response.document
     }
@@ -216,7 +237,6 @@ class OnlyKdrama : MainAPI() {
         page: Int
     ): String {
         if (page <= 1) return base
-
         return "${base.trimEnd('/')}/page/$page/"
     }
 
@@ -224,7 +244,6 @@ class OnlyKdrama : MainAPI() {
         document: Document,
         page: Int
     ): Boolean {
-
         return document.select("a[href]").any { link ->
 
             val href = link.attr("href")
@@ -258,11 +277,7 @@ class OnlyKdrama : MainAPI() {
             absolute(request.data) ?: "$mainUrl/"
         }
 
-        val url = getPageUrl(
-            base,
-            pageNumber
-        )
-
+        val url = getPageUrl(base, pageNumber)
         val document = getDocument(url)
         val results = parseHome(document)
 
@@ -278,10 +293,7 @@ class OnlyKdrama : MainAPI() {
                 results,
                 isHorizontalImages = false
             ),
-            hasNext = hasNextPage(
-                document,
-                pageNumber
-            )
+            hasNext = hasNextPage(document, pageNumber)
         )
     }
 }
