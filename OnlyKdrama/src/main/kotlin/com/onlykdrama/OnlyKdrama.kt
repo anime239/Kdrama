@@ -448,211 +448,136 @@ class OnlyKdrama : MainAPI() {
             ?.toInt()
     }
 
+    private fun parseEpisodes(
+        document: Document,
+        poster: String?,
+        plot: String?
+        ): List<Episode> {
+        val results = mutableListOf<Episode>()
 
+        val contentRoot = document.selectFirst("#info .wp-content")
+            ?: return results
 
-private fun parseMovieLinks(document: Document): String {
-    val contentRoot = document.selectFirst("#info .wp-content")
-        ?: throw ErrorLoadingException("Movie download section not found.")
+        val allAccordions = contentRoot.select(
+            ".wp-block-ub-content-toggle-accordion"
+        )
 
-    val accordionSelector = ".wp-block-ub-content-toggle-accordion"
-    val titleSelector = ".wp-block-ub-content-toggle-accordion-title"
-    val contentSelector = ".wp-block-ub-content-toggle-accordion-content-wrap"
-
-    val accordions = contentRoot.select(accordionSelector)
-    val links = JSONArray()
-    val seenUrls = mutableSetOf<String>()
-
-    val providers = if (accordions.isNotEmpty()) {
-        accordions.mapNotNull { accordion ->
-            val content = accordion.selectFirst(contentSelector)
-                ?: return@mapNotNull null
-
-            val provider = accordion.selectFirst(titleSelector)
-                ?.text()
-                ?.trim()
-                ?.replace(Regex("(?i)download links"), "")
-                ?.trim()
-                ?.ifBlank { null }
-                ?: "Download"
-
-            provider to content
-        }
-    } else {
-        listOf("Download" to contentRoot)
-    }
-
-    for ((provider, content) in providers) {
-        for (element in content.select("a[href], [data-href], [data-url]")) {
-            val rawUrl = listOf(
-                element.attr("href"),
-                element.attr("data-href"),
-                element.attr("data-url")
-            ).firstOrNull { it.isNotBlank() } ?: continue
-
-            val link = absolute(rawUrl) ?: continue
-            if (!link.startsWith("http", true)) continue
-            if (!seenUrls.add(link)) continue
-
-            val fileName = element.text().trim()
-                .ifBlank { element.attr("title").trim() }
-                .ifBlank { element.attr("aria-label").trim() }
-                .ifBlank { element.parent()?.text()?.trim().orEmpty() }
-                .ifBlank { provider }
-
-            links.put(
-                JSONObject()
-                    .put("name", fileName)
-                    .put("url", link)
-                    .put("provider", provider)
+        val episodeAccordions = allAccordions.filter { accordion ->
+            val content = accordion.selectFirst(
+                ".wp-block-ub-content-toggle-accordion-content-wrap"
             )
+
+            content?.selectFirst(
+                ".wp-block-ub-content-toggle-accordion"
+            ) != null
         }
-    }
 
-    if (links.length() == 0) {
-        throw ErrorLoadingException("No movie download links found.")
-    }
+        val entries = if (episodeAccordions.isNotEmpty()) {
+            episodeAccordions.mapIndexedNotNull { index, accordion ->
+                val title = accordion.selectFirst(
+                    ".wp-block-ub-content-toggle-accordion-title"
+                )?.text()?.trim()?.ifBlank { null }
+                    ?: "Episode ${index + 1}"
 
-    return JSONObject()
-        .put("links", links)
-        .toString()
-}
+                val content = accordion.selectFirst(
+                    ".wp-block-ub-content-toggle-accordion-content-wrap"
+                ) ?: return@mapIndexedNotNull null
 
-
-
-private fun parseEpisodes(
-    document: Document,
-    poster: String?,
-    plot: String?
-    ): List<Episode> {
-    val results = mutableListOf<Episode>()
-
-    val contentRoot = document.selectFirst("#info .wp-content")
-        ?: return results
-
-    val accordionSelector = ".wp-block-ub-content-toggle-accordion"
-    val titleSelector = ".wp-block-ub-content-toggle-accordion-title"
-    val contentSelector = ".wp-block-ub-content-toggle-accordion-content-wrap"
-
-    val allAccordions = contentRoot.select(accordionSelector)
-
-    val episodeAccordions = allAccordions.filter { accordion ->
-        val content = accordion.selectFirst(contentSelector)
-        content?.selectFirst(accordionSelector) != null
-    }
-
-    val entries = if (episodeAccordions.isNotEmpty()) {
-        episodeAccordions.mapIndexedNotNull { index, accordion ->
-            val title = accordion.selectFirst(titleSelector)
-                ?.text()
-                ?.trim()
-                ?.ifBlank { null }
-                ?: "Episode ${index + 1}"
-
-            val content = accordion.selectFirst(contentSelector)
-                ?: return@mapIndexedNotNull null
-
-            Triple(title, content, index + 1)
-        }
-    } else {
-        listOf(Triple("Episode 1", contentRoot, 1))
-    }
-
-    for ((episodeTitle, episodeContent, index) in entries) {
-        val providerAccordions = episodeContent.select(accordionSelector)
-
-        val links = JSONArray()
-        val seenUrls = mutableSetOf<String>()
-
-        val providers = if (providerAccordions.isNotEmpty()) {
-            providerAccordions.mapNotNull { accordion ->
-                val provider = accordion.selectFirst(titleSelector)
-                    ?.text()
-                    ?.trim()
-                    ?.replace(Regex("(?i)download links"), "")
-                    ?.trim()
-                    ?.ifBlank { null }
-                    ?: "Download"
-
-                val content = accordion.selectFirst(contentSelector)
-                    ?: return@mapNotNull null
-
-                provider to content
+                Triple(title, content, index + 1)
             }
         } else {
-            listOf("Download" to episodeContent)
+            listOf(Triple("Episode 1", contentRoot, 1))
         }
 
-        for ((provider, providerContent) in providers) {
-            for (element in providerContent.select(
-                "a[href], [data-href], [data-url]"
-            )) {
-                val rawUrl = listOf(
-                    element.attr("href"),
-                    element.attr("data-href"),
-                    element.attr("data-url")
-                ).firstOrNull { it.isNotBlank() } ?: continue
+        for ((episodeTitle, episodeContent, index) in entries) {
+            val providerAccordions = episodeContent.select(
+                ".wp-block-ub-content-toggle-accordion"
+            )
 
-                val link = absolute(rawUrl) ?: continue
+            val links = JSONArray()
+            val seenUrls = mutableSetOf<String>()
 
-                if (!link.startsWith("http", true)) continue
-                if (!seenUrls.add(link)) continue
+            val providerEntries = if (providerAccordions.isNotEmpty()) {
+                providerAccordions.mapNotNull { accordion ->
+                    val title = accordion.selectFirst(
+                        ".wp-block-ub-content-toggle-accordion-title"
+                    )?.text()?.trim()
+                        ?.replace("Download Links", "")?.trim()
+                        ?.ifBlank { null } ?: "Download"
 
-                val fileName = element.text().trim()
-                    .ifBlank { element.attr("title").trim() }
-                    .ifBlank { element.attr("aria-label").trim() }
-                    .ifBlank { element.parent()?.text()?.trim().orEmpty() }
-                    .ifBlank { provider }
+                    val content = accordion.selectFirst(
+                        ".wp-block-ub-content-toggle-accordion-content-wrap"
+                    ) ?: return@mapNotNull null
 
-                links.put(
-                    JSONObject()
-                        .put("name", fileName)
-                        .put("url", link)
-                        .put("provider", provider)
-                )
+                    title to content
+                }
+            } else {
+                listOf("Download" to episodeContent)
             }
+
+            for ((provider, providerContent) in providerEntries) {
+                for (element in providerContent.select(
+                    "a[href], [data-href], [data-url]"
+                )) {
+                    val rawUrl = listOf(
+                        element.attr("href"),
+                        element.attr("data-href"),
+                        element.attr("data-url")
+                    ).firstOrNull { it.isNotBlank() } ?: continue
+
+                    val link = absolute(rawUrl) ?: continue
+
+                    if (!link.startsWith("http", true)) continue
+                    if (!seenUrls.add(link)) continue
+
+                    val linkName = element.text().trim()
+                        .ifBlank { element.attr("title").trim() }
+                        .ifBlank { element.attr("aria-label").trim() }
+                        .ifBlank { element.parent()?.text()?.trim().orEmpty() }
+                        .ifBlank { provider }
+
+                    links.put(
+                        JSONObject()
+                            .put("name", linkName)
+                            .put("url", link)
+                            .put("provider", provider)
+                    )
+                }
+            }
+
+            Log.d(
+                "OnlyKDrama",
+                "$episodeTitle: ${links.length()} download links collected"
+            )
+
+            if (links.length() == 0) continue
+
+            val episodeNumber = Regex("[0-9]+")
+                .find(episodeTitle)?.value?.toIntOrNull() ?: index
+
+            val episodeData = JSONObject()
+                .put("title", episodeTitle)
+                .put("links", links)
+                .toString()
+
+            results.add(newEpisode(episodeData) {
+                name = episodeTitle
+                season = 1
+                episode = episodeNumber
+                posterUrl = poster
+                description = plot?.take(180)?.let {
+                    if (plot.length > 180) "${it.substringBeforeLast(" ")}..." else it
+                }
+            })
         }
 
         Log.d(
             "OnlyKDrama",
-            "$episodeTitle: ${links.length()} download links collected"
+            "Total playable episode entries: ${results.size}"
         )
 
-        if (links.length() == 0) continue
-
-        val episodeNumber = Regex("[0-9]+")
-            .find(episodeTitle)
-            ?.value
-            ?.toIntOrNull()
-            ?: index
-
-        val episodeData = JSONObject()
-            .put("title", episodeTitle)
-            .put("links", links)
-            .toString()
-
-        results.add(newEpisode(episodeData) {
-            name = episodeTitle
-            season = 1
-            episode = episodeNumber
-            posterUrl = poster
-            description = plot?.take(180)?.let {
-                if (plot.length > 180) {
-                    "${it.substringBeforeLast(" ")}..."
-                } else {
-                    it
-                }
-            }
-        })
+        return results
     }
-
-    Log.d(
-        "OnlyKDrama",
-        "Total episode entries: ${results.size}"
-    )
-
-    return results
-}
-
 
     override suspend fun load(url: String): LoadResponse? {
         val document = getDocument(url)
@@ -674,13 +599,11 @@ private fun parseEpisodes(
         val isMovie = url.contains("/movies/")
 
         if (isMovie) {
-            val movieData = parseMovieLinks(document)
-
             return newMovieLoadResponse(
                 title,
                 url,
                 TvType.Movie,
-                movieData
+                url
             ) {
                 posterUrl = poster
                 this.plot = plot
@@ -726,8 +649,8 @@ private fun parseEpisodes(
             JSONObject(data).getJSONArray("links")
         }.getOrNull() ?: return false
 
+        val tasks = mutableListOf<Triple<String, String, String>>()
         val seenUrls = mutableSetOf<String>()
-        var loaded = false
 
         for (index in 0 until links.length()) {
             val item = links.optJSONObject(index) ?: continue
@@ -738,47 +661,58 @@ private fun parseEpisodes(
 
             if (url.isBlank() || !seenUrls.add(url)) continue
 
-            var callbackCount = 0
-
-            try {
-                Log.d("OnlyKDrama", "START provider=$provider")
-                Log.d("OnlyKDrama", "URL=$url")
-
-                val matched = loadExtractor(
-                    url,
-                    mainUrl,
-                    { subtitle ->
-                        subtitleCallback(subtitle)
-                    }
-                ) { link ->
-                    callbackCount++
-                    loaded = true
-
-                    Log.d(
-                        "OnlyKDrama",
-                        "LINK FOUND provider=$provider name=${link.name} url=${link.url}"
-                    )
-
-                    callback(link)
-                }
-
-                Log.d(
-                    "OnlyKDrama",
-                    "RESULT provider=$provider matched=$matched callbacks=$callbackCount"
-                )
-
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                Log.e(
-                    "OnlyKDrama",
-                    "FAILED provider=$provider file=$fileName url=$url error=${e.message}"
-                )
-            }
+            tasks.add(Triple(url, provider, fileName))
         }
 
-        Log.d("OnlyKDrama", "FINAL success=$loaded")
+        if (tasks.isEmpty()) return false
 
-        return loaded
+        val semaphore = Semaphore(7)
+        val callbackLock = Any()
+        val loaded = AtomicBoolean(false)
+
+        coroutineScope {
+            tasks.map { (url, provider, fileName) ->
+                async {
+                    semaphore.withPermit {
+                        try {
+                            Log.d(
+                                "OnlyKDrama",
+                                "Extracting provider=$provider; file=$fileName"
+                            )
+
+                            loadExtractor(
+                                url,
+                                mainUrl,
+                                { subtitle ->
+                                    synchronized(callbackLock) {
+                                        subtitleCallback(subtitle)
+                                    }
+                                }
+                            ) { link ->
+                                synchronized(callbackLock) {
+                                    loaded.set(true)
+                                    callback(link)
+                                }
+                            }
+
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            Log.e(
+                                "OnlyKDrama",
+                                "Extractor failed: provider=$provider; file=$fileName; ${e.message}"
+                            )
+                        }
+                    }
+                }
+            }.awaitAll()
+        }
+
+        Log.d(
+            "OnlyKDrama",
+            "Extraction completed: ${tasks.size} provider links processed; success=${loaded.get()}"
+        )
+
+        return loaded.get()
     }
 }
