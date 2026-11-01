@@ -26,7 +26,6 @@ import android.widget.TextView
 object OnlyKdramaWebView {
 
     private const val TAG = "OnlyKDramaWebView"
-
     const val HOME_URL = "https://onlykdrama.shop/"
 
     fun hasSiteCookies(): Boolean {
@@ -55,9 +54,7 @@ object OnlyKdramaWebView {
             }
 
         manager.flush()
-
         OnlyKdramaSession.clear(context)
-
         onDone?.invoke()
     }
 
@@ -71,8 +68,7 @@ object OnlyKdramaWebView {
 
         val density = context.resources.displayMetrics.density
 
-        fun dp(value: Int): Int =
-            (value * density).toInt()
+        fun dp(value: Int): Int = (value * density).toInt()
 
         val header = TextView(context).apply {
             text = "OnlyKDrama Verification"
@@ -112,60 +108,105 @@ object OnlyKdramaWebView {
             javaScriptEnabled = true
             domStorageEnabled = true
             databaseEnabled = true
-
             loadsImagesAutomatically = true
             blockNetworkImage = false
-
             useWideViewPort = true
             loadWithOverviewMode = true
-
             javaScriptCanOpenWindowsAutomatically = true
             setSupportMultipleWindows(false)
-
-            mixedContentMode =
-                WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
-
+            mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
             cacheMode = WebSettings.LOAD_DEFAULT
-
             allowFileAccess = false
             allowContentAccess = true
-
             builtInZoomControls = true
             displayZoomControls = false
         }
 
         fun saveSession() {
-            cookieManager.flush()
+            val currentUrl = webView.url.orEmpty()
 
-            val cookies = cookieManager.getCookie(HOME_URL)
-            val userAgent = webView.settings.userAgentString
-
-            if (cookies.isNullOrBlank()) {
-                status.text = "No website cookies found. Complete verification first."
+            if (!currentUrl.startsWith(HOME_URL)) {
+                status.text = "Open OnlyKDrama homepage before saving."
                 return
             }
 
-            OnlyKdramaSession.save(
-                context,
-                cookies,
-                userAgent
-            )
+            status.text = "Checking website page..."
 
-            status.text = "Session saved. You can close this window."
-            Log.d(TAG, "OnlyKDrama session saved")
+            webView.evaluateJavascript(
+                """
+                (function() {
+                    var html = document.documentElement
+                        ? document.documentElement.innerHTML.toLowerCase()
+                        : "";
+                    var body = document.body
+                        ? document.body.innerText.toLowerCase()
+                        : "";
+                    var challenge =
+                        html.includes("cf-chl-") ||
+                        html.includes("challenge-platform") ||
+                        body.includes("just a moment") ||
+                        body.includes("verify you are human");
+                    var dramas = document.querySelectorAll(
+                        'a[href*="/drama/"]'
+                    ).length;
+                    return !challenge && dramas > 0;
+                })();
+                """.trimIndent()
+            ) { result ->
+
+                if (result != "true") {
+                    status.text =
+                        "Verification is not complete or drama listings are not visible. Finish loading the homepage, then try SAVE SESSION again."
+                    Log.d(TAG, "Session not saved: page verification failed")
+                    return@evaluateJavascript
+                }
+
+                cookieManager.flush()
+
+                val cookies = cookieManager.getCookie(HOME_URL)
+                val userAgent = webView.settings.userAgentString
+
+                if (cookies.isNullOrBlank()) {
+                    status.text = "No website cookies found."
+                    Log.d(TAG, "Session not saved: no cookies")
+                    return@evaluateJavascript
+                }
+
+                val saved = OnlyKdramaSession.save(
+                    context,
+                    cookies,
+                    userAgent
+                )
+
+                if (!saved) {
+                    status.text = "Unable to save session. Try again."
+                    return@evaluateJavascript
+                }
+
+                val hasClearance = OnlyKdramaSession
+                    .hasCloudflareClearance(context)
+
+                status.text = if (hasClearance) {
+                    "Session saved. Cloudflare clearance cookie detected. Close and retry CloudStream."
+                } else {
+                    "Session saved, but cf_clearance was not found. CloudStream may still be blocked."
+                }
+
+                Log.d(
+                    TAG,
+                    "Verified page session saved; cf_clearance=$hasClearance"
+                )
+            }
         }
 
         webView.webChromeClient = object : WebChromeClient() {
-
             override fun onProgressChanged(
                 view: WebView?,
                 newProgress: Int
             ) {
                 progress.progress = newProgress
-
                 progress.visibility =
-                    if (newProgress >= 100) View.GONE
-                    else View.VISIBLE
+                    if (newProgress >= 100) View.GONE else View.VISIBLE
             }
         }
 
@@ -185,16 +226,10 @@ object OnlyKdramaWebView {
                 url: String?
             ) {
                 cookieManager.flush()
-
                 progress.visibility = View.GONE
 
-                if (
-                    url?.startsWith("https://onlykdrama.shop") == true
-                ) {
-                    saveSession()
-                } else {
-                    status.text = "Waiting for website..."
-                }
+                status.text =
+                    "Page loaded. Complete verification if shown, then press SAVE SESSION."
 
                 view?.post {
                     view.requestLayout()
@@ -208,8 +243,7 @@ object OnlyKdramaWebView {
                 error: android.webkit.WebResourceError?
             ) {
                 if (request?.isForMainFrame == true) {
-                    status.text =
-                        "Connection error: ${error?.description}"
+                    status.text = "Connection error: ${error?.description}"
                 }
             }
 
@@ -228,9 +262,7 @@ object OnlyKdramaWebView {
                 request: WebResourceRequest?
             ): Boolean {
                 val uri: Uri = request?.url ?: return false
-
-                return uri.scheme != "https" &&
-                    uri.scheme != "http"
+                return uri.scheme != "https" && uri.scheme != "http"
             }
         }
 
@@ -256,54 +288,20 @@ object OnlyKdramaWebView {
         val save = makeButton("SAVE SESSION")
         val close = makeButton("CLOSE")
 
-        controls.addView(
-            back,
-            LinearLayout.LayoutParams(0, dp(54), 1f)
-        )
-
-        controls.addView(
-            refresh,
-            LinearLayout.LayoutParams(0, dp(54), 1f)
-        )
-
-        controls.addView(
-            save,
-            LinearLayout.LayoutParams(0, dp(54), 1.2f)
-        )
-
-        controls.addView(
-            close,
-            LinearLayout.LayoutParams(0, dp(54), 1f)
-        )
+        controls.addView(back, LinearLayout.LayoutParams(0, dp(54), 1f))
+        controls.addView(refresh, LinearLayout.LayoutParams(0, dp(54), 1f))
+        controls.addView(save, LinearLayout.LayoutParams(0, dp(54), 1.2f))
+        controls.addView(close, LinearLayout.LayoutParams(0, dp(54), 1f))
 
         val content = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(Color.BLACK)
 
-            addView(
-                header,
-                LinearLayout.LayoutParams(-1, dp(54))
-            )
-
-            addView(
-                status,
-                LinearLayout.LayoutParams(-1, dp(52))
-            )
-
-            addView(
-                progress,
-                LinearLayout.LayoutParams(-1, dp(3))
-            )
-
-            addView(
-                webView,
-                LinearLayout.LayoutParams(-1, 0, 1f)
-            )
-
-            addView(
-                controls,
-                LinearLayout.LayoutParams(-1, dp(60))
-            )
+            addView(header, LinearLayout.LayoutParams(-1, dp(54)))
+            addView(status, LinearLayout.LayoutParams(-1, dp(52)))
+            addView(progress, LinearLayout.LayoutParams(-1, dp(3)))
+            addView(webView, LinearLayout.LayoutParams(-1, 0, 1f))
+            addView(controls, LinearLayout.LayoutParams(-1, dp(60)))
         }
 
         val dialog = AlertDialog.Builder(context)
@@ -314,11 +312,8 @@ object OnlyKdramaWebView {
 
         fun cleanup() {
             if (cleaned) return
-
             cleaned = true
-
             cookieManager.flush()
-
             webView.stopLoading()
             webView.loadUrl("about:blank")
             webView.removeAllViews()
@@ -326,9 +321,7 @@ object OnlyKdramaWebView {
         }
 
         back.setOnClickListener {
-            if (webView.canGoBack()) {
-                webView.goBack()
-            }
+            if (webView.canGoBack()) webView.goBack()
         }
 
         refresh.setOnClickListener {
@@ -369,12 +362,8 @@ object OnlyKdramaWebView {
         val metrics = context.resources.displayMetrics
 
         dialog.window?.apply {
-            setBackgroundDrawableResource(
-                android.R.color.transparent
-            )
-
+            setBackgroundDrawableResource(android.R.color.transparent)
             setGravity(Gravity.CENTER)
-
             setLayout(
                 metrics.widthPixels - dp(24),
                 metrics.heightPixels - dp(100)
