@@ -1,7 +1,7 @@
+
 package com.onlykdrama
 
 import android.app.Activity
-import android.app.AlertDialog
 import android.app.Application
 import android.content.Context
 import android.os.Bundle
@@ -12,7 +12,6 @@ import java.lang.ref.WeakReference
 object OnlyKdramaVerification {
 
     private const val COOLDOWN = 120_000L
-
     private val handler = Handler(Looper.getMainLooper())
 
     @Volatile
@@ -24,6 +23,9 @@ object OnlyKdramaVerification {
     @Volatile
     private var registered = false
 
+    @Volatile
+    private var opening = false
+
     fun initialize(context: Context) {
         if (registered) return
 
@@ -34,7 +36,6 @@ object OnlyKdramaVerification {
 
             application.registerActivityLifecycleCallbacks(
                 object : Application.ActivityLifecycleCallbacks {
-
                     override fun onActivityResumed(activity: Activity) {
                         currentActivity = WeakReference(activity)
                     }
@@ -52,10 +53,12 @@ object OnlyKdramaVerification {
 
                     override fun onActivityStarted(activity: Activity) {}
                     override fun onActivityStopped(activity: Activity) {}
+
                     override fun onActivitySaveInstanceState(
                         activity: Activity,
                         outState: Bundle
                     ) {}
+
                     override fun onActivityDestroyed(activity: Activity) {}
                 }
             )
@@ -65,39 +68,50 @@ object OnlyKdramaVerification {
     }
 
     fun challengeDetected() {
-        val now = System.currentTimeMillis()
-
         synchronized(this) {
-            if (now - lastPromptTime < COOLDOWN) return
+            val now = System.currentTimeMillis()
+
+            if (opening || now - lastPromptTime < COOLDOWN) return
+
+            opening = true
             lastPromptTime = now
         }
 
         handler.post {
-            val activity = currentActivity.get() ?: return@post
+            val activity = currentActivity.get()
 
-            if (activity.isFinishing || activity.isDestroyed) return@post
+            if (
+                activity == null ||
+                activity.isFinishing ||
+                activity.isDestroyed
+            ) {
+                synchronized(this) {
+                    opening = false
+                    lastPromptTime = 0L
+                }
+                return@post
+            }
 
-            AlertDialog.Builder(activity)
-                .setTitle("OnlyKDrama Verification")
-                .setMessage(
-                    "Cloudflare verification is required to access OnlyKDrama. " +
-                        "Open the verification browser and complete the check."
-                )
-                .setPositiveButton("VERIFY") { _, _ ->
-                    try {
-                        OnlyKdramaWebView.open(activity)
-                    } catch (_: Exception) {
+            try {
+                OnlyKdramaWebView.open(activity) {
+                    synchronized(this) {
+                        opening = false
                         lastPromptTime = 0L
                     }
                 }
-                .setNegativeButton("LATER", null)
-                .show()
+            } catch (_: Exception) {
+                synchronized(this) {
+                    opening = false
+                    lastPromptTime = 0L
+                }
+            }
         }
     }
 
     fun sessionVerified() {
         synchronized(this) {
             lastPromptTime = 0L
+            opening = false
         }
     }
 }
