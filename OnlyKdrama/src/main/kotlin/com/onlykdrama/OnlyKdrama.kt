@@ -51,7 +51,6 @@ class OnlyKdrama : MainAPI() {
     }
 
     private suspend fun getDocument(url: String): Document {
-
         val requestHeaders = OnlyKdramaSession.headers(headers)
 
         Log.d(
@@ -66,36 +65,44 @@ class OnlyKdrama : MainAPI() {
 
         val html = response.text
         val lower = html.lowercase()
+        val document = response.document
 
-        val challengeMarkers = listOf(
-            "cf-chl-",
-            "challenge-platform",
-            "just a moment",
-            "verify you are human"
-        )
+        val hasDramaLinks =
+            document.select("a[href*=/drama/]").isNotEmpty()
 
-        val foundMarkers = challengeMarkers.filter {
-            lower.contains(it)
-        }
+        val hasCfChallengeToken =
+            lower.contains("cf-chl-") ||
+                lower.contains("__cf_chl_tk")
 
-        if (foundMarkers.isNotEmpty()) {
-            Log.e(
-                "OnlyKDrama",
-                "Challenge response. URL=$url; markers=$foundMarkers; title=${response.document.title()}; savedCookieNames=${OnlyKdramaSession.savedCookieNamesForLog()}; cf_clearance=${OnlyKdramaSession.hasCloudflareClearanceForLog()}"
-            )
+        val hasVerificationText =
+            lower.contains("just a moment") ||
+                lower.contains("verify you are human")
 
-            throw ErrorLoadingException(
-                "OnlyKDrama returned a verification page. " +
-                    "Check the plugin log for cookie diagnostics."
-            )
-        }
+        val hasChallengePlatform =
+            lower.contains("challenge-platform")
+
+        val isChallenge =
+            hasCfChallengeToken ||
+                hasVerificationText ||
+                (hasChallengePlatform && !hasDramaLinks)
 
         Log.d(
             "OnlyKDrama",
-            "Page received. URL=$url; title=${response.document.title()}; htmlLength=${html.length}"
+            "Response diagnostics: url=$url, htmlLength=${html.length}, dramaLinks=$hasDramaLinks, cfChallengeToken=$hasCfChallengeToken, verificationText=$hasVerificationText, challengePlatform=$hasChallengePlatform, isChallenge=$isChallenge"
         )
 
-        return response.document
+        if (isChallenge) {
+            Log.e(
+                "OnlyKDrama",
+                "Cloudflare challenge detected. URL=$url; cookieNames=${OnlyKdramaSession.savedCookieNamesForLog()}; cf_clearance=${OnlyKdramaSession.hasCloudflareClearanceForLog()}"
+            )
+
+            throw ErrorLoadingException(
+                "OnlyKDrama returned a Cloudflare verification page. Check the plugin log for diagnostics."
+            )
+        }
+
+        return document
     }
 
     private fun getImage(element: Element?): String? {
@@ -179,12 +186,10 @@ class OnlyKdrama : MainAPI() {
     private fun parseHome(
         document: Document
     ): List<SearchResponse> {
-
         val results = mutableListOf<SearchResponse>()
         val seen = mutableSetOf<String>()
 
         for (link in document.select("a[href*=/drama/]")) {
-
             val url = absolute(link.attr("href")) ?: continue
 
             if (!url.startsWith("$mainUrl/")) continue
@@ -229,6 +234,11 @@ class OnlyKdrama : MainAPI() {
             )
         }
 
+        Log.d(
+            "OnlyKDrama",
+            "Homepage parsing completed: ${results.size} titles found"
+        )
+
         return results
     }
 
@@ -245,7 +255,6 @@ class OnlyKdrama : MainAPI() {
         page: Int
     ): Boolean {
         return document.select("a[href]").any { link ->
-
             val href = link.attr("href")
 
             val nextPage = Regex(
@@ -268,7 +277,6 @@ class OnlyKdrama : MainAPI() {
         page: Int,
         request: MainPageRequest
     ): HomePageResponse {
-
         val pageNumber = page.coerceAtLeast(1)
 
         val base = if (request.data.isBlank()) {
@@ -283,7 +291,7 @@ class OnlyKdrama : MainAPI() {
 
         if (results.isEmpty()) {
             throw ErrorLoadingException(
-                "No drama titles found on OnlyKDrama."
+                "No drama titles found on OnlyKDrama. The page loaded, but its drama links could not be parsed."
             )
         }
 
