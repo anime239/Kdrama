@@ -9,6 +9,12 @@ import org.json.JSONObject
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import java.net.URLEncoder
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 
 class OnlyKdrama : MainAPI() {
 
@@ -622,52 +628,88 @@ class OnlyKdrama : MainAPI() {
         }
     }
 
-    override suspend fun loadLinks(
-        data: String,
-        isCasting: Boolean,
-        subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit
+override suspend fun loadLinks(
+    data: String,
+    isCasting: Boolean,
+    subtitleCallback: (SubtitleFile) -> Unit,
+    callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val links = runCatching {
-            JSONObject(data).getJSONArray("links")
-        }.getOrNull() ?: return false
+    val links = runCatching {
+        JSONObject(data).getJSONArray("links")
+    }.getOrNull() ?: return false
 
-        var loaded = false
-
-        for (index in 0 until links.length()) {
-            val item = links.optJSONObject(index) ?: continue
-            val url = item.optString("url")
-            val provider = item.optString("provider")
-            val fileName = item.optString("name")
-
-            if (url.isBlank()) continue
-
-            Log.d(
-                "OnlyKDrama",
-                "Extracting provider=$provider; file=$fileName; url=$url"
+    val items = (0 until links.length()).mapNotNull { index ->
+        links.optJSONObject(index)?.let { item ->
+            Triple(
+                item.optString("url"),
+                item.optString("provider"),
+                item.optString("name")
             )
-
-            try {
-                var extracted = false
-
-                loadExtractor(
-                    url,
-                    mainUrl,
-                    subtitleCallback
-                ) { link ->
-                    extracted = true
-                    callback(link)
-                }
-
-                if (extracted) loaded = true
-            } catch (e: Exception) {
-                Log.e(
-                    "OnlyKDrama",
-                    "Extractor failed: provider=$provider; file=$fileName; ${e.message}"
-                )
-            }
         }
+    }.filter { it.first.isNotBlank() }
+        .distinctBy { it.first }
 
-        return loaded
+    if (items.isEmpty()) return false
+
+    val semaphore = Semaphore(10)
+    val callbackLock = Any()
+    val startTime = System.currentTimeMillis()
+
+    val results = coroutineScope {
+        items.map { (url, provider, fileName) ->
+            async {
+                semaphore.withPermit {
+                    var extracted = false
+
+                    try {
+                        Log.d(
+                            "OnlyKDrama",
+                            "Starting extraction: $provider; $fileName"
+                        )
+
+                        loadExtractor(
+                            url,
+                            mainUrl,
+                            { subtitle ->
+                                synchronized(callbackLock) {
+                                    subtitleCallback(subtitle)
+                                }
+                            }
+                        ) { link ->
+                            extracted = true
+
+                            synchronized(callbackLock) {
+                                callback(link)
+                            }
+                        }
+
+                        Log.d(
+                            "OnlyKDrama",
+                            "Extraction completed: $provider; success=$extracted"
+                        )
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        Log.e(
+                            "OnlyKDrama",
+                            "Extraction failed: $provider; $fileName; ${e.message}"
+                        )
+                    }
+
+                    extracted
+                }
+            }
+        }.awaitAll()
     }
+
+    val successful = results.count { it }
+
+    Log.d(
+        "OnlyKDrama",
+        "Extraction finished: $successful/${items.size} providers in ${System.currentTimeMillis() - startTime}ms"
+    )
+
+    return successful > 0
+}
+
 }
