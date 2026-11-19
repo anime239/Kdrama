@@ -1,4 +1,3 @@
-
 package com.onlykdrama
 
 import android.app.AlertDialog
@@ -26,10 +25,11 @@ class OnlyKdramaPlugin : Plugin() {
 
         openSettings = { ctx ->
 
+            OnlyKdramaVerification.initialize(ctx)
+
             val density = ctx.resources.displayMetrics.density
 
-            fun dp(value: Int): Int =
-                (value * density).toInt()
+            fun dp(value: Int): Int = (value * density).toInt()
 
             val backgroundColor = 0xFF09090F.toInt()
             val panelColor = 0xFF171421.toInt()
@@ -57,35 +57,19 @@ class OnlyKdramaPlugin : Plugin() {
                 this.text = value
                 textSize = size
                 setTextColor(color)
-
-                if (bold) {
-                    setTypeface(null, Typeface.BOLD)
-                }
+                if (bold) setTypeface(null, Typeface.BOLD)
             }
 
-            val saved =
-                OnlyKdramaSession.hasSavedSession(ctx)
-
-            val clearance =
-                OnlyKdramaWebView.hasSiteCookies()
+            val saved = OnlyKdramaSession.hasCloudflareClearance(ctx)
+            val clearance = OnlyKdramaWebView.hasSiteCookies()
 
             val root = LinearLayout(ctx).apply {
                 orientation = LinearLayout.VERTICAL
-                setPadding(
-                    dp(18),
-                    dp(18),
-                    dp(18),
-                    dp(15)
-                )
-                background = rounded(
-                    backgroundColor,
-                    20,
-                    0xFF332744.toInt()
-                )
+                setPadding(dp(18), dp(18), dp(18), dp(15))
+                background = rounded(backgroundColor, 20, 0xFF332744.toInt())
             }
 
             // Header
-
             val header = LinearLayout(ctx).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
@@ -100,91 +84,38 @@ class OnlyKdramaPlugin : Plugin() {
                 background = rounded(purple, 13)
             }
 
-            header.addView(
-                logo,
-                LinearLayout.LayoutParams(
-                    dp(48),
-                    dp(48)
-                )
-            )
+            header.addView(logo, LinearLayout.LayoutParams(dp(48), dp(48)))
 
             val titleArea = LinearLayout(ctx).apply {
                 orientation = LinearLayout.VERTICAL
                 setPadding(dp(12), 0, 0, 0)
             }
 
-            titleArea.addView(
-                text(
-                    "OnlyKDrama",
-                    19f,
-                    textColor,
-                    true
-                )
-            )
-
-            titleArea.addView(
-                text(
-                    "SESSION SETTINGS",
-                    10f,
-                    mutedColor,
-                    true
-                )
-            )
-
-            header.addView(
-                titleArea,
-                LinearLayout.LayoutParams(0, -2, 1f)
-            )
+            titleArea.addView(text("OnlyKDrama", 19f, textColor, true))
+            titleArea.addView(text("SESSION SETTINGS", 10f, mutedColor, true))
+            header.addView(titleArea, LinearLayout.LayoutParams(0, -2, 1f))
 
             val badge = TextView(ctx).apply {
                 text = "● ACTIVE"
                 textSize = 10f
                 setTextColor(green)
-                setPadding(
-                    dp(10),
-                    dp(8),
-                    dp(10),
-                    dp(8)
-                )
-                background = rounded(
-                    0xFF192D22.toInt(),
-                    25
-                )
+                setPadding(dp(10), dp(8), dp(10), dp(8))
+                background = rounded(0xFF192D22.toInt(), 25)
             }
 
             header.addView(badge)
             root.addView(header)
 
             // Status panel
-
             val statusPanel = LinearLayout(ctx).apply {
                 orientation = LinearLayout.VERTICAL
-                setPadding(
-                    dp(15),
-                    dp(14),
-                    dp(15),
-                    dp(14)
-                )
-                background = rounded(
-                    panelColor,
-                    15,
-                    0xFF30243F.toInt()
-                )
+                setPadding(dp(15), dp(14), dp(15), dp(14))
+                background = rounded(panelColor, 15, 0xFF30243F.toInt())
             }
 
-            statusPanel.addView(
-                text(
-                    "Session status",
-                    15f,
-                    textColor,
-                    true
-                )
-            )
+            statusPanel.addView(text("Session status", 15f, textColor, true))
 
-            fun addStatus(
-                label: String,
-                available: Boolean
-            ) {
+            fun addStatus(label: String, available: Boolean) {
                 val row = LinearLayout(ctx).apply {
                     orientation = LinearLayout.HORIZONTAL
                     gravity = Gravity.CENTER_VERTICAL
@@ -192,31 +123,13 @@ class OnlyKdramaPlugin : Plugin() {
                 }
 
                 val dot = TextView(ctx).apply {
-                    text = if (available) "●" else "●"
+                    text = "●"
                     textSize = 12f
-                    setTextColor(
-                        if (available) green
-                        else 0xFFE58B8B.toInt()
-                    )
+                    setTextColor(if (available) green else 0xFFE58B8B.toInt())
                 }
 
-                row.addView(
-                    dot,
-                    LinearLayout.LayoutParams(
-                        dp(24),
-                        -2
-                    )
-                )
-
-                row.addView(
-                    text(
-                        label,
-                        13f,
-                        textColor
-                    ),
-                    LinearLayout.LayoutParams(0, -2, 1f)
-                )
-
+                row.addView(dot, LinearLayout.LayoutParams(dp(24), -2))
+                row.addView(text(label, 13f, textColor), LinearLayout.LayoutParams(0, -2, 1f))
                 row.addView(
                     text(
                         if (available) "Available" else "Not available",
@@ -229,15 +142,8 @@ class OnlyKdramaPlugin : Plugin() {
                 statusPanel.addView(row)
             }
 
-            addStatus(
-                "Saved HTTP session",
-                saved
-            )
-
-            addStatus(
-                "Cloudflare browser cookies",
-                clearance
-            )
+            addStatus("Saved HTTP session", saved)
+            addStatus("Cloudflare browser cookies", clearance)
 
             val info = text(
                 "Verification and session saving happen automatically when required.",
@@ -251,21 +157,11 @@ class OnlyKdramaPlugin : Plugin() {
 
             root.addView(
                 statusPanel,
-                LinearLayout.LayoutParams(
-                    -1,
-                    -2
-                ).apply {
-                    topMargin = dp(20)
-                }
+                LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(20) }
             )
 
             // Actions
-
-            fun makeButton(
-                label: String,
-                color: Int,
-                foreground: Int
-            ) = Button(ctx).apply {
+            fun makeButton(label: String, color: Int, foreground: Int) = Button(ctx).apply {
                 text = label
                 isAllCaps = false
                 textSize = 12f
@@ -278,23 +174,9 @@ class OnlyKdramaPlugin : Plugin() {
                 elevation = 0f
             }
 
-            val openButton = makeButton(
-                "Open Website",
-                purple,
-                Color.WHITE
-            )
-
-            val clearButton = makeButton(
-                "Clear Session",
-                0xFF29202F.toInt(),
-                0xFFFFA0A0.toInt()
-            )
-
-            val closeButton = makeButton(
-                "Close",
-                0xFF211B2B.toInt(),
-                textColor
-            )
+            val openButton = makeButton("Open Website", purple, Color.WHITE)
+            val clearButton = makeButton("Clear Session", 0xFF29202F.toInt(), 0xFFFFA0A0.toInt())
+            val closeButton = makeButton("Close", 0xFF211B2B.toInt(), textColor)
 
             val actions = LinearLayout(ctx).apply {
                 orientation = LinearLayout.VERTICAL
@@ -302,9 +184,7 @@ class OnlyKdramaPlugin : Plugin() {
 
             actions.addView(
                 openButton,
-                LinearLayout.LayoutParams(-1, dp(49)).apply {
-                    topMargin = dp(18)
-                }
+                LinearLayout.LayoutParams(-1, dp(49)).apply { topMargin = dp(18) }
             )
 
             val secondary = LinearLayout(ctx).apply {
@@ -313,23 +193,17 @@ class OnlyKdramaPlugin : Plugin() {
 
             secondary.addView(
                 clearButton,
-                LinearLayout.LayoutParams(0, dp(47), 1f).apply {
-                    marginEnd = dp(5)
-                }
+                LinearLayout.LayoutParams(0, dp(47), 1f).apply { marginEnd = dp(5) }
             )
 
             secondary.addView(
                 closeButton,
-                LinearLayout.LayoutParams(0, dp(47), 1f).apply {
-                    marginStart = dp(5)
-                }
+                LinearLayout.LayoutParams(0, dp(47), 1f).apply { marginStart = dp(5) }
             )
 
             actions.addView(
                 secondary,
-                LinearLayout.LayoutParams(-1, dp(47)).apply {
-                    topMargin = dp(9)
-                }
+                LinearLayout.LayoutParams(-1, dp(47)).apply { topMargin = dp(9) }
             )
 
             root.addView(actions)
@@ -354,7 +228,7 @@ class OnlyKdramaPlugin : Plugin() {
                 dialog.dismiss()
 
                 try {
-                    OnlyKdramaWebView.open(ctx)
+                    OnlyKdramaWebView.open(ctx, clearStaleClearance = false)
                 } catch (e: Exception) {
                     Toast.makeText(
                         ctx,
@@ -384,20 +258,12 @@ class OnlyKdramaPlugin : Plugin() {
 
             dialog.show()
 
-            val screenWidth =
-                ctx.resources.displayMetrics.widthPixels
+            val screenWidth = ctx.resources.displayMetrics.widthPixels
 
             dialog.window?.apply {
-                setBackgroundDrawableResource(
-                    android.R.color.transparent
-                )
-
+                setBackgroundDrawableResource(android.R.color.transparent)
                 setGravity(Gravity.CENTER)
-
-                setLayout(
-                    minOf(dp(440), screenWidth - dp(32)),
-                    -2
-                )
+                setLayout(minOf(dp(440), screenWidth - dp(32)), -2)
             }
         }
     }
