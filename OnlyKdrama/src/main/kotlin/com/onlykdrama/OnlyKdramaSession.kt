@@ -23,12 +23,24 @@ object OnlyKdramaSession {
             Context.MODE_PRIVATE
         )
 
+    private fun parseCookieMap(cookies: String?): LinkedHashMap<String, String> {
+        val map = linkedMapOf<String, String>()
+        cookies.orEmpty().split(";").forEach { raw ->
+            val trimmed = raw.trim()
+            val idx = trimmed.indexOf('=')
+            if (idx > 0) {
+                val key = trimmed.substring(0, idx).trim()
+                val value = trimmed.substring(idx + 1).trim()
+                if (key.isNotBlank() && value.isNotBlank()) {
+                    map[key] = value
+                }
+            }
+        }
+        return map
+    }
+
     private fun cookieNames(cookies: String?): List<String> {
-        return cookies.orEmpty()
-            .split(";")
-            .map { it.substringBefore("=").trim() }
-            .filter { it.isNotBlank() }
-            .distinct()
+        return parseCookieMap(cookies).keys.toList()
     }
 
     fun save(
@@ -38,14 +50,20 @@ object OnlyKdramaSession {
     ): Boolean {
         initialize(context)
 
-        if (cookies.isNullOrBlank()) return false
+        val cleanedMap = parseCookieMap(cookies)
+        if (cleanedMap.isEmpty()) return false
 
-        val names = cookieNames(cookies)
+        val formatted = cleanedMap.entries.joinToString("; ") { "${it.key}=${it.value}" }
+        val names = cleanedMap.keys.toList()
 
-        val saved = preferences(context).edit()
-            .putString(COOKIE_KEY, cookies)
-            .putString(UA_KEY, userAgent.orEmpty())
-            .commit()
+        val editor = preferences(context).edit()
+            .putString(COOKIE_KEY, formatted)
+
+        if (!userAgent.isNullOrBlank()) {
+            editor.putString(UA_KEY, userAgent)
+        }
+
+        val saved = editor.commit()
 
         Log.d(
             TAG,
@@ -53,6 +71,35 @@ object OnlyKdramaSession {
         )
 
         return saved
+    }
+
+    fun mergeCookies(newCookies: Map<String, String>) {
+        val context = appContext ?: return
+        if (newCookies.isEmpty()) return
+
+        synchronized(this) {
+            val prefs = preferences(context)
+            val existing = parseCookieMap(prefs.getString(COOKIE_KEY, null))
+
+            var changed = false
+            for ((key, value) in newCookies) {
+                val cleanKey = key.trim()
+                val cleanValue = value.trim()
+                if (cleanKey.isBlank() || cleanValue.isBlank()) continue
+                if (existing[cleanKey] != cleanValue) {
+                    existing[cleanKey] = cleanValue
+                    changed = true
+                }
+            }
+
+            if (changed) {
+                val merged = existing.entries.joinToString("; ") { "${it.key}=${it.value}" }
+                prefs.edit()
+                    .putString(COOKIE_KEY, merged)
+                    .commit()
+                Log.d(TAG, "Merged response cookies: ${existing.keys}")
+            }
+        }
     }
 
     fun hasSavedSession(context: Context): Boolean {
