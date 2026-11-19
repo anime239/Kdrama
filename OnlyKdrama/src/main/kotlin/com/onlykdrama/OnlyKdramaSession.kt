@@ -1,4 +1,3 @@
-
 package com.onlykdrama
 
 import android.content.Context
@@ -57,10 +56,7 @@ object OnlyKdramaSession {
     }
 
     fun hasSavedSession(context: Context): Boolean {
-        return preferences(context)
-            .getString(COOKIE_KEY, null)
-            .orEmpty()
-            .isNotBlank()
+        return hasCloudflareClearance(context)
     }
 
     fun hasCloudflareClearance(context: Context): Boolean {
@@ -106,6 +102,11 @@ object OnlyKdramaSession {
                 put("User-Agent", userAgent)
             }
         }
+    }
+
+    fun clear() {
+        val context = appContext ?: return
+        clear(context)
     }
 
     fun clear(context: Context) {
