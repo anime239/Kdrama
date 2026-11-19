@@ -11,10 +11,8 @@ import android.net.Uri
 import android.net.http.SslError
 import android.os.Handler
 import android.os.Looper
-import android.os.SystemClock
 import android.view.Gravity
 import android.view.KeyEvent
-import android.view.MotionEvent
 import android.view.View
 import android.webkit.CookieManager
 import android.webkit.SslErrorHandler
@@ -31,6 +29,7 @@ import android.widget.TextView
 object OnlyKdramaWebView {
 
     const val HOME_URL = "https://onlykdrama.shop/"
+    private const val BASE_DOMAIN_URL = "https://onlykdrama.shop"
 
     private const val PURPLE = 0xFF9B55E8.toInt()
     private const val DARK = 0xFF09090F.toInt()
@@ -38,7 +37,7 @@ object OnlyKdramaWebView {
     private const val TEXT = 0xFFF5F0FA.toInt()
     private const val MUTED = 0xFFA69CAF.toInt()
 
-    private const val CHECK_INTERVAL = 1200L
+    private const val CHECK_INTERVAL = 800L
 
     private fun extractCookieValue(cookies: String?, name: String): String? {
         return cookies.orEmpty()
@@ -68,7 +67,11 @@ object OnlyKdramaWebView {
     }
 
     fun hasSiteCookies(): Boolean {
-        val cookies = CookieManager.getInstance().getCookie(HOME_URL)
+        val manager = CookieManager.getInstance()
+        val cookies = mergeCookies(
+            manager.getCookie(HOME_URL),
+            manager.getCookie(BASE_DOMAIN_URL)
+        )
         return extractCookieValue(cookies, "cf_clearance") != null
     }
 
@@ -76,6 +79,7 @@ object OnlyKdramaWebView {
         val manager = CookieManager.getInstance()
         val domains = listOf(
             HOME_URL,
+            BASE_DOMAIN_URL,
             "https://.onlykdrama.shop/",
             "https://www.onlykdrama.shop/"
         )
@@ -91,7 +95,10 @@ object OnlyKdramaWebView {
         onDone: (() -> Unit)? = null
     ) {
         val manager = CookieManager.getInstance()
-        val cookies = manager.getCookie(HOME_URL).orEmpty()
+        val cookies = mergeCookies(
+            manager.getCookie(HOME_URL),
+            manager.getCookie(BASE_DOMAIN_URL)
+        )
 
         cookies.split(";")
             .map { it.substringBefore("=").trim() }
@@ -99,6 +106,7 @@ object OnlyKdramaWebView {
             .distinct()
             .forEach { name ->
                 manager.setCookie(HOME_URL, "$name=; Max-Age=0; path=/")
+                manager.setCookie(BASE_DOMAIN_URL, "$name=; Max-Age=0; path=/")
                 manager.setCookie(HOME_URL, "$name=; Max-Age=0; domain=.onlykdrama.shop; path=/")
             }
 
@@ -146,7 +154,10 @@ object OnlyKdramaWebView {
         }
 
         val initialClearance = extractCookieValue(
-            cookieManager.getCookie(HOME_URL),
+            mergeCookies(
+                cookieManager.getCookie(HOME_URL),
+                cookieManager.getCookie(BASE_DOMAIN_URL)
+            ),
             "cf_clearance"
         )
 
@@ -156,8 +167,6 @@ object OnlyKdramaWebView {
         var saved = false
         var checking = false
         var rateLimited = false
-        var turnstileFirstSeenAt = 0L
-        var lastAutoTapAt = 0L
 
         lateinit var dialog: AlertDialog
 
@@ -224,7 +233,7 @@ object OnlyKdramaWebView {
         statusPanel.addView(makeText("Website verification", 15f, TEXT, true))
 
         val status = makeText(
-            "Verifying automatically...",
+            "Checking security automatically...",
             12f,
             MUTED
         ).apply {
@@ -279,72 +288,34 @@ object OnlyKdramaWebView {
             }
         }
 
-        fun dispatchAutoTap(cssX: Float, cssY: Float) {
-            if (cleaned || saved || webView.width <= 0 || webView.height <= 0) return
-
-            @Suppress("DEPRECATION")
-            val scale = webView.scale.takeIf { it > 0f } ?: density
-            val x = (cssX * scale).coerceIn(1f, (webView.width - 1).toFloat())
-            val y = (cssY * scale).coerceIn(1f, (webView.height - 1).toFloat())
-
-            val downTime = SystemClock.uptimeMillis()
-            val downEvent = MotionEvent.obtain(
-                downTime,
-                downTime,
-                MotionEvent.ACTION_DOWN,
-                x,
-                y,
-                0
-            )
-            webView.dispatchTouchEvent(downEvent)
-            downEvent.recycle()
-
-            handler.postDelayed({
-                if (cleaned || saved) return@postDelayed
-                val upTime = SystemClock.uptimeMillis()
-                val upEvent = MotionEvent.obtain(
-                    downTime,
-                    upTime,
-                    MotionEvent.ACTION_UP,
-                    x,
-                    y,
-                    0
-                )
-                webView.dispatchTouchEvent(upEvent)
-                upEvent.recycle()
-            }, 60L)
-        }
-
         fun isExpectedHost(url: String?): Boolean {
             val host = runCatching { Uri.parse(url.orEmpty()).host.orEmpty() }.getOrDefault("")
             val targetHost = Uri.parse(HOME_URL).host.orEmpty()
             return host.equals(targetHost, true) || host.endsWith(".$targetHost", true)
         }
 
+        fun getCurrentCookies(): String {
+            cookieManager.flush()
+            return mergeCookies(
+                cookieManager.getCookie(HOME_URL),
+                cookieManager.getCookie(BASE_DOMAIN_URL),
+                webView.url?.let { cookieManager.getCookie(it) }
+            )
+        }
+
         // Automatic session saving
-        fun saveVerifiedSession() {
-            if (saved || cleaned || rateLimited) return
+        fun trySaveVerifiedSession(): Boolean {
+            if (saved) return true
+            if (cleaned || rateLimited) return false
 
             val currentUrl = webView.url
-            if (!isExpectedHost(currentUrl)) return
+            if (!isExpectedHost(currentUrl)) return false
 
-            cookieManager.flush()
-
-            val mergedCookies = mergeCookies(
-                cookieManager.getCookie(HOME_URL),
-                currentUrl?.let { cookieManager.getCookie(it) }
-            )
-
-            val clearanceValue = extractCookieValue(mergedCookies, "cf_clearance")
-
-            if (clearanceValue == null) {
-                status.text = "Waiting for clearance cookie..."
-                return
-            }
+            val mergedCookies = getCurrentCookies()
+            val clearanceValue = extractCookieValue(mergedCookies, "cf_clearance") ?: return false
 
             if (clearStaleClearance && initialClearance != null && clearanceValue == initialClearance) {
-                status.text = "Refreshing clearance cookie..."
-                return
+                return false
             }
 
             val result = OnlyKdramaSession.save(
@@ -353,10 +324,7 @@ object OnlyKdramaWebView {
                 webView.settings.userAgentString
             )
 
-            if (!result) {
-                status.text = "Saving session..."
-                return
-            }
+            if (!result) return false
 
             saved = true
 
@@ -370,13 +338,20 @@ object OnlyKdramaWebView {
                 if (!cleaned && dialog.isShowing) {
                     dialog.dismiss()
                 }
-            }, 400L)
+            }, 350L)
+
+            return true
         }
 
-        // Automatic Cloudflare detection + Turnstile auto-tap
+        // Automatic Cloudflare detection
         val autoCheck = object : Runnable {
             override fun run() {
                 if (cleaned || saved || rateLimited || !dialog.isShowing) {
+                    return
+                }
+
+                // If cf_clearance already arrived after a user tap, save and close immediately
+                if (trySaveVerifiedSession()) {
                     return
                 }
 
@@ -412,24 +387,19 @@ object OnlyKdramaWebView {
                             return "RATE_LIMITED";
                         }
 
-                        var widget = document.querySelector(
-                            "iframe[src*='challenges.cloudflare.com'], #turnstile-wrapper, #challenge-stage, [name^='cf-turnstile']"
-                        );
+                        var hasWidget = document.querySelector(
+                            "input[name='cf-turnstile-response'], [id^='cf-chl-widget'], #turnstile-wrapper, #challenge-stage, iframe[src*='challenges.cloudflare.com']"
+                        ) !== null || body.includes("verify you are human");
 
-                        if (widget) {
-                            var r = widget.getBoundingClientRect();
-                            if (r.width > 40 && r.height > 20) {
-                                return "WIDGET:" + (r.left + 28) + ":" + (r.top + r.height / 2);
-                            }
-                            return "CHALLENGE";
+                        if (hasWidget) {
+                            return "NEEDS_TAP";
                         }
 
                         var challenge =
                             html.includes("cf-chl-") ||
                             html.includes("challenge-platform") ||
                             body.includes("just a moment") ||
-                            body.includes("checking your browser") ||
-                            body.includes("verify you are human");
+                            body.includes("checking your browser");
 
                         if (challenge) return "CHALLENGE";
 
@@ -447,8 +417,8 @@ object OnlyKdramaWebView {
 
                     val result = rawResult?.trim('"').orEmpty()
 
-                    when {
-                        result == "RATE_LIMITED" -> {
+                    when (result) {
+                        "RATE_LIMITED" -> {
                             rateLimited = true
                             handler.removeCallbacks(this)
                             progress.visibility = View.GONE
@@ -457,32 +427,18 @@ object OnlyKdramaWebView {
                             secureBadge.setTextColor(0xFFFF9999.toInt())
                         }
 
-                        result == "VERIFIED" -> {
-                            saveVerifiedSession()
+                        "VERIFIED" -> {
+                            if (!trySaveVerifiedSession()) {
+                                status.text = "Waiting for clearance cookie..."
+                            }
                         }
 
-                        result.startsWith("WIDGET:") -> {
-                            val now = SystemClock.uptimeMillis()
-                            if (turnstileFirstSeenAt == 0L) {
-                                turnstileFirstSeenAt = now
-                            }
-
-                            status.text = "Auto-completing verification..."
-
-                            if (now - turnstileFirstSeenAt >= 1800L && now - lastAutoTapAt >= 3500L) {
-                                val parts = result.split(":")
-                                val cssX = parts.getOrNull(1)?.toFloatOrNull()
-                                val cssY = parts.getOrNull(2)?.toFloatOrNull()
-                                if (cssX != null && cssY != null) {
-                                    lastAutoTapAt = now
-                                    dispatchAutoTap(cssX, cssY)
-                                }
-                            }
+                        "NEEDS_TAP" -> {
+                            status.text = "Tap \"Verify you are human\" below — closes automatically"
                         }
 
                         else -> {
-                            turnstileFirstSeenAt = 0L
-                            status.text = "Verifying security automatically..."
+                            status.text = "Checking security automatically..."
                         }
                     }
 
@@ -517,9 +473,10 @@ object OnlyKdramaWebView {
                 progress.visibility = View.GONE
 
                 if (!saved && !rateLimited) {
-                    status.text = "Checking security automatically..."
-                    handler.removeCallbacks(autoCheck)
-                    handler.postDelayed(autoCheck, 500L)
+                    if (!trySaveVerifiedSession()) {
+                        handler.removeCallbacks(autoCheck)
+                        handler.postDelayed(autoCheck, 400L)
+                    }
                 }
             }
 
@@ -584,7 +541,7 @@ object OnlyKdramaWebView {
 
         // Footer
         val footer = makeText(
-            "Verification, saving, and closing happen automatically",
+            "Session saving and closing happen automatically",
             10f,
             MUTED
         ).apply {
@@ -644,8 +601,6 @@ object OnlyKdramaWebView {
 
             rateLimited = false
             checking = false
-            turnstileFirstSeenAt = 0L
-            lastAutoTapAt = 0L
             secureBadge.text = "● SECURE"
             secureBadge.setTextColor(0xFFBBA0FF.toInt())
             status.text = "Refreshing website..."
@@ -695,7 +650,7 @@ object OnlyKdramaWebView {
 
             webView.loadUrl(HOME_URL)
 
-            handler.postDelayed(autoCheck, 1200L)
+            handler.postDelayed(autoCheck, 800L)
         }
     }
 }
