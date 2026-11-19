@@ -185,36 +185,33 @@ object OnlyKdramaSession {
         return hasCloudflareClearance(context)
     }
 
+    fun cookieMap(): Map<String, String> {
+        val context = appContext ?: return emptyMap()
+        val prefs = preferences(context)
+        val storedCookies = prefs.getString(COOKIE_KEY, null)
+        val synced = syncWebViewCookiesIfNeeded(prefs, storedCookies)
+        return parseCookieMap(synced)
+    }
+
     fun headers(
         original: Map<String, String>
     ): Map<String, String> {
-        val context = appContext ?: return original
-        val prefs = preferences(context)
-
-        val storedCookies = prefs.getString(COOKIE_KEY, null)
-        val cookies = syncWebViewCookiesIfNeeded(prefs, storedCookies)
-        val userAgent = prefs.getString(UA_KEY, null)
-
-        return original.toMutableMap().apply {
-            if (!cookies.isNullOrBlank()) {
-                put("Cookie", cookies)
-            }
-
-            if (!userAgent.isNullOrBlank()) {
-                put("User-Agent", userAgent)
-            }
+        val normalized = linkedMapOf<String, String>()
+        for ((key, value) in original) {
+            val lowerKey = key.lowercase()
+            // Cookies and Referer are passed via NiceHttp's dedicated parameters
+            if (lowerKey == "cookie" || lowerKey == "referer") continue
+            normalized[lowerKey] = value
         }
-    }
 
-    fun clearIfVersionMatches(expectedVersion: Long) {
-        val context = appContext ?: return
-        synchronized(this) {
-            if (sessionVersion.get() != expectedVersion) {
-                Log.d(TAG, "Skip clear: session already updated to version=${sessionVersion.get()}")
-                return
-            }
-            clear(context)
+        val context = appContext ?: return normalized
+        val userAgent = preferences(context).getString(UA_KEY, null)
+
+        if (!userAgent.isNullOrBlank()) {
+            normalized["user-agent"] = userAgent
         }
+
+        return normalized
     }
 
     fun clear() {
