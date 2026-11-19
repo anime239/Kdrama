@@ -38,7 +38,7 @@ object OnlyKdramaWebView {
     private const val TEXT = 0xFFF5F0FA.toInt()
     private const val MUTED = 0xFFA69CAF.toInt()
 
-    private const val CHECK_INTERVAL = 700L
+    private const val CHECK_INTERVAL = 1000L
 
     private fun extractCookieValue(cookies: String?, name: String): String? {
         return cookies.orEmpty()
@@ -137,7 +137,9 @@ object OnlyKdramaWebView {
         return GradientDrawable().apply {
             setColor(color)
             cornerRadius = radius
-            stroke?.let { setStroke(1, it) }
+            stroke?.let {
+                setStroke(1, it)
+            }
         }
     }
 
@@ -150,14 +152,29 @@ object OnlyKdramaWebView {
         OnlyKdramaSession.initialize(context)
 
         val density = context.resources.displayMetrics.density
-        fun dp(value: Int): Int = (value * density).toInt()
 
-        val screenWidth = context.resources.displayMetrics.widthPixels
-        val screenHeight = context.resources.displayMetrics.heightPixels
+        fun dp(value: Int): Int =
+            (value * density).toInt()
 
-        val windowWidth = minOf(dp(440), screenWidth - dp(32)).coerceAtLeast(dp(280))
-        val windowHeight = minOf(dp(760), screenHeight - dp(64)).coerceAtLeast(dp(400))
-        val webViewHeight = (windowHeight - dp(270)).coerceAtLeast(dp(130))
+        val screenWidth =
+            context.resources.displayMetrics.widthPixels
+
+        val screenHeight =
+            context.resources.displayMetrics.heightPixels
+
+        val windowWidth = minOf(
+            dp(440),
+            screenWidth - dp(32)
+        ).coerceAtLeast(dp(280))
+
+        val windowHeight = minOf(
+            dp(760),
+            screenHeight - dp(64)
+        ).coerceAtLeast(dp(400))
+
+        val webViewHeight = (
+            windowHeight - dp(270)
+        ).coerceAtLeast(dp(130))
 
         val cookieManager = CookieManager.getInstance()
         cookieManager.setAcceptCookie(true)
@@ -189,16 +206,23 @@ object OnlyKdramaWebView {
                 text = value
                 textSize = size
                 setTextColor(color)
-                if (bold) setTypeface(null, Typeface.BOLD)
+
+                if (bold) {
+                    setTypeface(null, Typeface.BOLD)
+                }
             }
         }
 
         // Header
+
         val header = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(16), 0, dp(14), 0)
-            background = roundedBackground(DARK, dp(16).toFloat())
+            background = roundedBackground(
+                DARK,
+                dp(16).toFloat()
+            )
         }
 
         val logo = TextView(context).apply {
@@ -207,10 +231,16 @@ object OnlyKdramaWebView {
             setTextColor(Color.WHITE)
             gravity = Gravity.CENTER
             typeface = Typeface.DEFAULT_BOLD
-            background = roundedBackground(PURPLE, dp(12).toFloat())
+            background = roundedBackground(
+                PURPLE,
+                dp(12).toFloat()
+            )
         }
 
-        header.addView(logo, LinearLayout.LayoutParams(dp(44), dp(44)))
+        header.addView(
+            logo,
+            LinearLayout.LayoutParams(dp(44), dp(44))
+        )
 
         val titleArea = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
@@ -218,31 +248,70 @@ object OnlyKdramaWebView {
             setPadding(dp(12), 0, 0, 0)
         }
 
-        titleArea.addView(makeText("OnlyKDrama", 18f, TEXT, true))
-        titleArea.addView(makeText("SECURITY VERIFICATION", 10f, MUTED, true))
-        header.addView(titleArea, LinearLayout.LayoutParams(0, -1, 1f))
+        titleArea.addView(
+            makeText("OnlyKDrama", 18f, TEXT, true)
+        )
+
+        titleArea.addView(
+            makeText(
+                "SECURITY VERIFICATION",
+                10f,
+                MUTED,
+                true
+            )
+        )
+
+        header.addView(
+            titleArea,
+            LinearLayout.LayoutParams(0, -1, 1f)
+        )
 
         val secureBadge = TextView(context).apply {
             text = "● SECURE"
             textSize = 11f
             setTextColor(0xFFBBA0FF.toInt())
-            setPadding(dp(11), dp(9), dp(11), dp(9))
-            background = roundedBackground(0xFF29203A.toInt(), dp(24).toFloat())
+            setPadding(
+                dp(11),
+                dp(9),
+                dp(11),
+                dp(9)
+            )
+            background = roundedBackground(
+                0xFF29203A.toInt(),
+                dp(24).toFloat()
+            )
         }
 
         header.addView(secureBadge)
 
         // Status panel
+
         val statusPanel = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(15), dp(13), dp(15), dp(12))
-            background = roundedBackground(PANEL, dp(15).toFloat(), 0xFF30243F.toInt())
+            setPadding(
+                dp(15),
+                dp(13),
+                dp(15),
+                dp(12)
+            )
+            background = roundedBackground(
+                PANEL,
+                dp(15).toFloat(),
+                0xFF30243F.toInt()
+            )
         }
 
-        statusPanel.addView(makeText("Website verification", 15f, TEXT, true))
+        statusPanel.addView(
+            makeText(
+                "Website verification",
+                15f,
+                TEXT,
+                true
+            )
+        )
 
         val status = makeText(
-            "Checking security automatically...",
+            "Checking website security automatically...",
             12f,
             MUTED
         ).apply {
@@ -252,6 +321,7 @@ object OnlyKdramaWebView {
         statusPanel.addView(status)
 
         // Progress
+
         val progress = ProgressBar(
             context,
             null,
@@ -259,10 +329,12 @@ object OnlyKdramaWebView {
         ).apply {
             max = 100
             progress = 0
-            progressTintList = ColorStateList.valueOf(PURPLE)
+            progressTintList =
+                ColorStateList.valueOf(PURPLE)
         }
 
         // WebView
+
         val webView = WebView(context).apply {
             setBackgroundColor(Color.BLACK)
             overScrollMode = View.OVER_SCROLL_NEVER
@@ -271,7 +343,10 @@ object OnlyKdramaWebView {
             isFocusableInTouchMode = true
         }
 
-        cookieManager.setAcceptThirdPartyCookies(webView, true)
+        cookieManager.setAcceptThirdPartyCookies(
+            webView,
+            true
+        )
 
         webView.settings.apply {
             javaScriptEnabled = true
@@ -283,7 +358,10 @@ object OnlyKdramaWebView {
             loadWithOverviewMode = true
             javaScriptCanOpenWindowsAutomatically = true
             setSupportMultipleWindows(false)
-            mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+
+            mixedContentMode =
+                WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+
             cacheMode = WebSettings.LOAD_DEFAULT
             allowFileAccess = false
             allowContentAccess = true
@@ -292,64 +370,79 @@ object OnlyKdramaWebView {
         }
 
         fun isExpectedHost(url: String?): Boolean {
-            val host = runCatching { Uri.parse(url.orEmpty()).host.orEmpty() }.getOrDefault("")
+            val host = runCatching {
+                Uri.parse(url.orEmpty()).host.orEmpty()
+            }.getOrDefault("")
             val targetHost = Uri.parse(HOME_URL).host.orEmpty()
-            return host.equals(targetHost, true) || host.endsWith(".$targetHost", true)
-        }
-
-        fun getCurrentCookies(): String {
-            cookieManager.flush()
-            return mergeCookies(
-                cookieManager.getCookie(HOME_URL),
-                cookieManager.getCookie(BASE_DOMAIN_URL),
-                webView.url?.let { cookieManager.getCookie(it) }
-            )
+            return host.equals(targetHost, true) ||
+                host.endsWith(".$targetHost", true)
         }
 
         // Automatic session saving
-        fun trySaveVerifiedSession(): Boolean {
-            if (saved) return true
-            if (cleaned || rateLimited) return false
+
+        fun saveVerifiedSession() {
+            if (saved || cleaned || rateLimited) return
 
             val currentUrl = webView.url
-            if (!isExpectedHost(currentUrl)) return false
+            if (!isExpectedHost(currentUrl)) return
 
-            val mergedCookies = getCurrentCookies()
-            val clearanceValue = extractCookieValue(mergedCookies, "cf_clearance") ?: return false
+            cookieManager.flush()
+
+            val cookies = mergeCookies(
+                cookieManager.getCookie(HOME_URL),
+                cookieManager.getCookie(BASE_DOMAIN_URL),
+                currentUrl?.let { cookieManager.getCookie(it) }
+            )
+
+            val clearanceValue = extractCookieValue(cookies, "cf_clearance")
+
+            if (clearanceValue == null) {
+                status.text = "Waiting for Cloudflare clearance cookie..."
+                return
+            }
 
             if (clearStaleClearance && initialClearance != null && clearanceValue == initialClearance) {
-                return false
+                status.text = "Refreshing Cloudflare clearance..."
+                return
             }
 
             val result = OnlyKdramaSession.save(
                 context,
-                mergedCookies,
+                cookies,
                 webView.settings.userAgentString
             )
 
-            if (!result) return false
+            if (!result) {
+                status.text = "Session saving failed. Retrying..."
+                return
+            }
 
             saved = true
 
-            status.text = "Verified! Closing automatically..."
+            OnlyKdramaVerification.sessionVerified()
+
+            status.text = "Verification complete. Session saved!"
             secureBadge.text = "✓ VERIFIED"
             secureBadge.setTextColor(0xFF9BE8B1.toInt())
-
-            OnlyKdramaVerification.sessionVerified()
 
             handler.postDelayed({
                 if (!cleaned && dialog.isShowing) {
                     dialog.dismiss()
                 }
-            }, 300L)
-
-            return true
+            }, 600L)
         }
 
         // Automatic Cloudflare detection
+
         val autoCheck = object : Runnable {
+
             override fun run() {
-                if (cleaned || saved || rateLimited || !dialog.isShowing) {
+                if (
+                    cleaned ||
+                    saved ||
+                    rateLimited ||
+                    !dialog.isShowing
+                ) {
                     return
                 }
 
@@ -372,6 +465,7 @@ object OnlyKdramaWebView {
                         var html = document.documentElement
                             ? document.documentElement.innerHTML.toLowerCase()
                             : "";
+
                         var body = document.body
                             ? document.body.innerText.toLowerCase()
                             : "";
@@ -382,16 +476,14 @@ object OnlyKdramaWebView {
                             body.includes("you are being rate limited") ||
                             body.includes("has banned you temporarily")
                         ) {
-                            return "RATE_LIMITED";
+                            return "2";
                         }
 
                         var hasWidget = document.querySelector(
                             "input[name='cf-turnstile-response'], [id^='cf-chl-widget'], #turnstile-wrapper, #challenge-stage, iframe[src*='challenges.cloudflare.com']"
                         ) !== null || body.includes("verify you are human");
 
-                        if (hasWidget) {
-                            return "NEEDS_TAP";
-                        }
+                        if (hasWidget) return "3";
 
                         var challenge =
                             html.includes("cf-chl-") ||
@@ -399,48 +491,56 @@ object OnlyKdramaWebView {
                             body.includes("just a moment") ||
                             body.includes("checking your browser");
 
-                        if (challenge) return "CHALLENGE";
+                        if (challenge) return "0";
 
                         var hasSiteDom = document.querySelector(
                             "article.item, #contenedor, .search-page, #single, .module"
                         ) !== null;
 
-                        return (document.readyState === "complete" && hasSiteDom) ? "VERIFIED" : "CHALLENGE";
+                        return (document.readyState === "complete" && hasSiteDom) ? "1" : "0";
                     })();
                     """.trimIndent()
                 ) { rawResult ->
+
                     checking = false
 
-                    if (cleaned || saved) return@evaluateJavascript
+                    if (cleaned || saved) {
+                        return@evaluateJavascript
+                    }
 
-                    val result = rawResult?.trim('"').orEmpty()
+                    when (rawResult?.trim('"')) {
 
-                    when (result) {
-                        "RATE_LIMITED" -> {
+                        "2" -> {
                             rateLimited = true
                             handler.removeCallbacks(this)
                             progress.visibility = View.GONE
-                            status.text = "Cloudflare Error 1015: Temporarily rate-limited. Close and wait."
+
+                            status.text =
+                                "Cloudflare Error 1015: Temporarily rate-limited. Close and wait before retrying."
                             secureBadge.text = "RATE LIMITED"
                             secureBadge.setTextColor(0xFFFF9999.toInt())
                         }
 
-                        "VERIFIED" -> {
-                            if (!trySaveVerifiedSession()) {
-                                status.text = "Waiting for clearance cookie..."
-                            }
+                        "1" -> {
+                            saveVerifiedSession()
                         }
 
-                        "NEEDS_TAP" -> {
-                            status.text = "Tap \"Verify you are human\" below — closes automatically"
+                        "3" -> {
+                            status.text =
+                                "Complete verification below — saves and closes automatically"
                         }
 
                         else -> {
-                            status.text = "Checking security automatically..."
+                            status.text =
+                                "Waiting for website verification..."
                         }
                     }
 
-                    if (!saved && !cleaned && !rateLimited) {
+                    if (
+                        !saved &&
+                        !cleaned &&
+                        !rateLimited
+                    ) {
                         handler.postDelayed(this, CHECK_INTERVAL)
                     }
                 }
@@ -448,15 +548,28 @@ object OnlyKdramaWebView {
         }
 
         // WebChromeClient
+
         webView.webChromeClient = object : WebChromeClient() {
-            override fun onProgressChanged(view: WebView?, newProgress: Int) {
+
+            override fun onProgressChanged(
+                view: WebView?,
+                newProgress: Int
+            ) {
                 progress.progress = newProgress
-                progress.visibility = if (newProgress >= 100) View.GONE else View.VISIBLE
+
+                progress.visibility =
+                    if (newProgress >= 100) {
+                        View.GONE
+                    } else {
+                        View.VISIBLE
+                    }
             }
         }
 
         // WebViewClient
+
         webView.webViewClient = object : WebViewClient() {
+
             override fun onPageStarted(
                 view: WebView?,
                 url: String?,
@@ -466,13 +579,19 @@ object OnlyKdramaWebView {
                 progress.visibility = View.VISIBLE
             }
 
-            override fun onPageFinished(view: WebView?, url: String?) {
+            override fun onPageFinished(
+                view: WebView?,
+                url: String?
+            ) {
                 cookieManager.flush()
                 progress.visibility = View.GONE
 
                 if (!saved && !rateLimited) {
+                    status.text =
+                        "Checking website security automatically..."
+
                     handler.removeCallbacks(autoCheck)
-                    handler.postDelayed(autoCheck, 300L)
+                    handler.postDelayed(autoCheck, 500L)
                 }
             }
 
@@ -482,7 +601,8 @@ object OnlyKdramaWebView {
                 error: android.webkit.WebResourceError?
             ) {
                 if (request?.isForMainFrame == true) {
-                    status.text = "Connection error: ${error?.description}"
+                    status.text =
+                        "Connection error: ${error?.description}"
                 }
             }
 
@@ -500,42 +620,106 @@ object OnlyKdramaWebView {
                 request: WebResourceRequest?
             ): Boolean {
                 val uri = request?.url ?: return false
-                return uri.scheme != "https" && uri.scheme != "http"
+
+                return uri.scheme != "https" &&
+                    uri.scheme != "http"
             }
         }
 
         // Bottom controls
+
         val controls = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
-            setPadding(dp(4), dp(5), dp(4), dp(5))
-            background = roundedBackground(DARK, dp(14).toFloat())
+            setPadding(
+                dp(4),
+                dp(5),
+                dp(4),
+                dp(5)
+            )
+            background = roundedBackground(
+                DARK,
+                dp(14).toFloat()
+            )
         }
 
-        fun makeButton(label: String, color: Int, textColor: Int): Button {
+        fun makeButton(
+            label: String,
+            color: Int,
+            textColor: Int
+        ): Button {
             return Button(context).apply {
                 text = label
                 isAllCaps = false
                 textSize = 12f
                 typeface = Typeface.DEFAULT_BOLD
+
                 setTextColor(textColor)
+
                 minHeight = dp(48)
                 minimumHeight = dp(48)
-                background = roundedBackground(color, dp(11).toFloat())
+
+                background = roundedBackground(
+                    color,
+                    dp(11).toFloat()
+                )
+
                 stateListAnimator = null
                 elevation = 0f
             }
         }
 
-        val back = makeButton("‹  Back", 0xFF211B2B.toInt(), TEXT)
-        val refresh = makeButton("↻  Refresh", 0xFF211B2B.toInt(), TEXT)
-        val close = makeButton("Close", PURPLE, Color.WHITE)
+        val back = makeButton(
+            "‹  Back",
+            0xFF211B2B.toInt(),
+            TEXT
+        )
 
-        controls.addView(back, LinearLayout.LayoutParams(0, dp(50), 1f).apply { marginEnd = dp(5) })
-        controls.addView(refresh, LinearLayout.LayoutParams(0, dp(50), 1f).apply { marginEnd = dp(5) })
-        controls.addView(close, LinearLayout.LayoutParams(0, dp(50), 1f))
+        val refresh = makeButton(
+            "↻  Refresh",
+            0xFF211B2B.toInt(),
+            TEXT
+        )
+
+        val close = makeButton(
+            "Close",
+            PURPLE,
+            Color.WHITE
+        )
+
+        controls.addView(
+            back,
+            LinearLayout.LayoutParams(
+                0,
+                dp(50),
+                1f
+            ).apply {
+                marginEnd = dp(5)
+            }
+        )
+
+        controls.addView(
+            refresh,
+            LinearLayout.LayoutParams(
+                0,
+                dp(50),
+                1f
+            ).apply {
+                marginEnd = dp(5)
+            }
+        )
+
+        controls.addView(
+            close,
+            LinearLayout.LayoutParams(
+                0,
+                dp(50),
+                1f
+            )
+        )
 
         // Footer
+
         val footer = makeText(
             "Session saving and closing happen automatically",
             10f,
@@ -546,33 +730,87 @@ object OnlyKdramaWebView {
         }
 
         // Main popup layout
+
         val content = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
-            setPadding(dp(10), dp(10), dp(10), dp(8))
-            background = roundedBackground(DARK, dp(19).toFloat(), 0xFF332744.toInt())
+            setPadding(
+                dp(10),
+                dp(10),
+                dp(10),
+                dp(8)
+            )
 
-            addView(header, LinearLayout.LayoutParams(-1, dp(58)))
-            addView(statusPanel, LinearLayout.LayoutParams(-1, dp(76)).apply {
-                topMargin = dp(9)
-                bottomMargin = dp(8)
-            })
-            addView(progress, LinearLayout.LayoutParams(-1, dp(3)))
-            addView(webView, LinearLayout.LayoutParams(-1, webViewHeight).apply {
-                topMargin = dp(5)
-                bottomMargin = dp(8)
-            })
-            addView(controls, LinearLayout.LayoutParams(-1, dp(58)))
-            addView(footer, LinearLayout.LayoutParams(-1, dp(24)))
+            background = roundedBackground(
+                DARK,
+                dp(19).toFloat(),
+                0xFF332744.toInt()
+            )
+
+            addView(
+                header,
+                LinearLayout.LayoutParams(
+                    -1,
+                    dp(58)
+                )
+            )
+
+            addView(
+                statusPanel,
+                LinearLayout.LayoutParams(
+                    -1,
+                    dp(76)
+                ).apply {
+                    topMargin = dp(9)
+                    bottomMargin = dp(8)
+                }
+            )
+
+            addView(
+                progress,
+                LinearLayout.LayoutParams(
+                    -1,
+                    dp(3)
+                )
+            )
+
+            addView(
+                webView,
+                LinearLayout.LayoutParams(
+                    -1,
+                    webViewHeight
+                ).apply {
+                    topMargin = dp(5)
+                    bottomMargin = dp(8)
+                }
+            )
+
+            addView(
+                controls,
+                LinearLayout.LayoutParams(
+                    -1,
+                    dp(58)
+                )
+            )
+
+            addView(
+                footer,
+                LinearLayout.LayoutParams(
+                    -1,
+                    dp(24)
+                )
+            )
         }
 
         // Dialog
+
         dialog = AlertDialog.Builder(context)
             .setView(content)
             .create()
 
         fun cleanup() {
             if (cleaned) return
+
             cleaned = true
 
             handler.removeCallbacks(autoCheck)
@@ -587,8 +825,12 @@ object OnlyKdramaWebView {
             onClosed?.invoke(saved)
         }
 
+        // Button actions
+
         back.setOnClickListener {
-            if (webView.canGoBack()) webView.goBack()
+            if (webView.canGoBack()) {
+                webView.goBack()
+            }
         }
 
         refresh.setOnClickListener {
@@ -596,8 +838,10 @@ object OnlyKdramaWebView {
 
             rateLimited = false
             checking = false
+
             secureBadge.text = "● SECURE"
             secureBadge.setTextColor(0xFFBBA0FF.toInt())
+
             status.text = "Refreshing website..."
 
             handler.removeCallbacks(autoCheck)
@@ -609,12 +853,17 @@ object OnlyKdramaWebView {
         }
 
         dialog.setOnKeyListener { _, keyCode, event ->
-            if (keyCode == KeyEvent.KEYCODE_BACK && event.action == KeyEvent.ACTION_UP) {
+
+            if (
+                keyCode == KeyEvent.KEYCODE_BACK &&
+                event.action == KeyEvent.ACTION_UP
+            ) {
                 if (webView.canGoBack()) {
                     webView.goBack()
                 } else {
                     dialog.dismiss()
                 }
+
                 true
             } else {
                 false
@@ -625,6 +874,8 @@ object OnlyKdramaWebView {
             cleanup()
         }
 
+        // Show and measure popup before loading the website
+
         dialog.show()
 
         dialog.window?.apply {
@@ -632,9 +883,17 @@ object OnlyKdramaWebView {
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                     WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM
             )
-            setBackgroundDrawableResource(android.R.color.transparent)
+
+            setBackgroundDrawableResource(
+                android.R.color.transparent
+            )
+
             setGravity(Gravity.CENTER)
-            setLayout(windowWidth, windowHeight)
+
+            setLayout(
+                windowWidth,
+                windowHeight
+            )
         }
 
         fun startLoading() {
@@ -648,11 +907,15 @@ object OnlyKdramaWebView {
             webView.requestFocus()
             webView.loadUrl(HOME_URL)
 
-            handler.postDelayed(autoCheck, 1000L)
+            handler.postDelayed(autoCheck, 1500L)
         }
 
+        // First layout pass
+
         content.post {
-            if (cleaned || !dialog.isShowing) return@post
+            if (cleaned || !dialog.isShowing) {
+                return@post
+            }
 
             if (clearStaleClearance) {
                 webView.clearCache(true)
