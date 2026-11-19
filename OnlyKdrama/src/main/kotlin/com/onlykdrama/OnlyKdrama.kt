@@ -204,7 +204,10 @@ class OnlyKdrama : MainAPI() {
             if (title.isBlank() || !seen.add(url)) continue
 
             val poster = getPoster(article)
-            val isMovie = url.contains("/movies/") || article.hasClass("movies")
+            val isMovie = url.contains("/movies/") ||
+                article.hasClass("movies") ||
+                title.contains("movie", true) ||
+                title.contains("film", true)
 
             val response = if (isMovie) {
                 newMovieSearchResponse(title, url, TvType.Movie) {
@@ -296,11 +299,13 @@ class OnlyKdrama : MainAPI() {
     }
 
     private fun hasNextPage(document: Document, page: Int): Boolean {
-        val paginationLinks = document.select(".pagination a[href], .nav-links a[href]")
-        return paginationLinks.any { link ->
+        return document.select("a[href]").any { link ->
             val href = link.attr("href")
-            val nextPage = Regex("""/page/(\d+)/?""", RegexOption.IGNORE_CASE)
-                .find(href)
+
+            val nextPage = Regex(
+                """/page/(\d+)/?""",
+                RegexOption.IGNORE_CASE
+            ).find(href)
                 ?.groupValues
                 ?.getOrNull(1)
                 ?.toIntOrNull()
@@ -410,8 +415,9 @@ class OnlyKdrama : MainAPI() {
     }
 
     private fun parseMovieLinks(document: Document): String {
-        val root = document.selectFirst("#info .wp-content .wp-block-ub-content-toggle-block")
-            ?: return JSONObject().put("links", JSONArray()).toString()
+        val root = document.selectFirst(
+            "#info .wp-content > .wp-block-ub-content-toggle-block"
+        ) ?: return JSONObject().put("links", JSONArray()).toString()
 
         val links = JSONArray()
         val seenUrls = mutableSetOf<String>()
@@ -577,15 +583,14 @@ class OnlyKdrama : MainAPI() {
 
                 if (links.length() == 0) continue
 
-                val episodeNumber = Regex("""(?i)\bE(?:p(?:isode)?)?\s*0*(\d+)""")
+                val episodeNumber = Regex("[0-9]+")
                     .find(episodeTitle)
-                    ?.groupValues?.getOrNull(1)
-                    ?.toIntOrNull()
-                    ?: Regex("[0-9]+").find(episodeTitle)?.value?.toIntOrNull()
-                    ?: index
+                    ?.value
+                    ?.toIntOrNull() ?: index
 
-                val seasonNumber = Regex("""(?i)\bS(?:eason)?\s*0*(\d+)""")
-                    .find(episodeTitle)
+                val seasonNumber = Regex(
+                    """(?i)\bS(?:eason)?\s*0*(\d+)"""
+                ).find(episodeTitle)
                     ?.groupValues?.getOrNull(1)
                     ?.toIntOrNull() ?: 1
 
@@ -600,7 +605,11 @@ class OnlyKdrama : MainAPI() {
                     episode = episodeNumber
                     posterUrl = poster
                     description = plot?.take(180)?.let {
-                        if (plot.length > 180) "${it.substringBeforeLast(" ")}..." else it
+                        if (plot.length > 180) {
+                            "${it.substringBeforeLast(" ")}..."
+                        } else {
+                            it
+                        }
                     }
                 })
             }
@@ -680,7 +689,11 @@ class OnlyKdrama : MainAPI() {
                     episode = group.episode
                     posterUrl = poster
                     description = plot?.take(180)?.let {
-                        if (plot.length > 180) "${it.substringBeforeLast(" ")}..." else it
+                        if (plot.length > 180) {
+                            "${it.substringBeforeLast(" ")}..."
+                        } else {
+                            it
+                        }
                     }
                 })
             }
