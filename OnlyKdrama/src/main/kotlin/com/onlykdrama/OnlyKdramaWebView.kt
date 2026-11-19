@@ -33,11 +33,13 @@ object OnlyKdramaWebView {
     const val HOME_URL = "https://onlykdrama.shop/"
     private const val BASE_DOMAIN_URL = "https://onlykdrama.shop"
 
-    private const val PURPLE = 0xFF9B55E8.toInt()
-    private const val DARK = 0xFF09090F.toInt()
-    private const val PANEL = 0xFF171421.toInt()
-    private const val TEXT = 0xFFF5F0FA.toInt()
-    private const val MUTED = 0xFFA69CAF.toInt()
+    private const val SAKURA_PINK = 0xFFF48FB1.toInt()
+    private const val BLUSH_PINK = 0xFFFFCAD4.toInt()
+    private const val DARK = 0xFF0D070B.toInt()
+    private const val PANEL = 0xFF1C1118.toInt()
+    private const val ROSE_BORDER = 0xFF4A2536.toInt()
+    private const val TEXT = 0xFFFFF5F8.toInt()
+    private const val MUTED = 0xFFC7A8B5.toInt()
 
     private const val WATCH_INTERVAL = 700L
 
@@ -153,7 +155,6 @@ object OnlyKdramaWebView {
         clearStaleClearance: Boolean = false,
         onClosed: ((verified: Boolean) -> Unit)? = null
     ) {
-        // Prevent stacked duplicate verification dialogs
         activeDialog?.get()?.let { existing ->
             if (existing.isShowing) {
                 runCatching { existing.dismiss() }
@@ -238,12 +239,12 @@ object OnlyKdramaWebView {
         val logo = TextView(context).apply {
             text = "K"
             textSize = 22f
-            setTextColor(Color.WHITE)
+            setTextColor(0xFF230B16.toInt())
             gravity = Gravity.CENTER
             typeface = Typeface.DEFAULT_BOLD
             background = roundedBackground(
-                PURPLE,
-                dp(12).toFloat()
+                BLUSH_PINK,
+                dp(13).toFloat()
             )
         }
 
@@ -259,7 +260,7 @@ object OnlyKdramaWebView {
         }
 
         titleArea.addView(
-            makeText("OnlyKDrama", 18f, TEXT, true)
+            makeText("OnlyKDrama", 18f, BLUSH_PINK, true)
         )
 
         titleArea.addView(
@@ -277,9 +278,9 @@ object OnlyKdramaWebView {
         )
 
         val secureBadge = TextView(context).apply {
-            text = "● SECURE"
+            text = "● PINK"
             textSize = 11f
-            setTextColor(0xFFBBA0FF.toInt())
+            setTextColor(BLUSH_PINK)
             setPadding(
                 dp(11),
                 dp(9),
@@ -287,7 +288,7 @@ object OnlyKdramaWebView {
                 dp(9)
             )
             background = roundedBackground(
-                0xFF29203A.toInt(),
+                0xFF331825.toInt(),
                 dp(24).toFloat()
             )
         }
@@ -307,7 +308,7 @@ object OnlyKdramaWebView {
             background = roundedBackground(
                 PANEL,
                 dp(15).toFloat(),
-                0xFF30243F.toInt()
+                ROSE_BORDER
             )
         }
 
@@ -315,7 +316,7 @@ object OnlyKdramaWebView {
             makeText(
                 "Website verification",
                 15f,
-                TEXT,
+                BLUSH_PINK,
                 true
             )
         )
@@ -340,7 +341,7 @@ object OnlyKdramaWebView {
             max = 100
             progress = 0
             progressTintList =
-                ColorStateList.valueOf(PURPLE)
+                ColorStateList.valueOf(SAKURA_PINK)
         }
 
         // WebView
@@ -433,7 +434,7 @@ object OnlyKdramaWebView {
 
             status.text = "Verified! Session saved — closing..."
             secureBadge.text = "✓ VERIFIED"
-            secureBadge.setTextColor(0xFF9BE8B1.toInt())
+            secureBadge.setTextColor(BLUSH_PINK)
 
             handler.postDelayed({
                 if (!cleaned && dialog.isShowing) {
@@ -442,7 +443,6 @@ object OnlyKdramaWebView {
             }, 300L)
         }
 
-        // Native-only check (no JS injection so Turnstile isn't disturbed)
         fun tryAutoSave(): Boolean {
             if (saved) return true
             if (cleaned || !dialog.isShowing) return false
@@ -476,7 +476,6 @@ object OnlyKdramaWebView {
             }
         }
 
-        // Manual fallback save button
         fun saveSessionManually() {
             if (saved || cleaned) return
 
@@ -608,7 +607,7 @@ object OnlyKdramaWebView {
 
                 background = roundedBackground(
                     color,
-                    dp(11).toFloat()
+                    dp(12).toFloat()
                 )
 
                 stateListAnimator = null
@@ -618,26 +617,26 @@ object OnlyKdramaWebView {
 
         val saveButton = makeButton(
             "Save & Close",
-            PURPLE,
-            Color.WHITE
+            SAKURA_PINK,
+            0xFF230B16.toInt()
         )
 
         val back = makeButton(
             "‹  Back",
-            0xFF211B2B.toInt(),
+            0xFF24131C.toInt(),
             TEXT
         )
 
         val refresh = makeButton(
             "↻  Refresh",
-            0xFF211B2B.toInt(),
+            0xFF24131C.toInt(),
             TEXT
         )
 
         val close = makeButton(
             "Close",
-            0xFF29202F.toInt(),
-            0xFFFFA0A0.toInt()
+            0xFF2D1620.toInt(),
+            0xFFFF9EB5.toInt()
         )
 
         val controls = LinearLayout(context).apply {
@@ -711,7 +710,7 @@ object OnlyKdramaWebView {
             background = roundedBackground(
                 DARK,
                 dp(19).toFloat(),
-                0xFF332744.toInt()
+                ROSE_BORDER
             )
 
             addView(
@@ -814,8 +813,8 @@ object OnlyKdramaWebView {
             if (saved || cleaned) return@setOnClickListener
 
             warnedNoClearance = false
-            secureBadge.text = "● SECURE"
-            secureBadge.setTextColor(0xFFBBA0FF.toInt())
+            secureBadge.text = "● PINK"
+            secureBadge.setTextColor(BLUSH_PINK)
             status.text = "Refreshing website..."
 
             webView.reload()
