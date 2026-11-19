@@ -1,7 +1,9 @@
 package com.onlykdrama
 
 import android.content.Context
+import android.content.SharedPreferences
 import android.util.Log
+import android.webkit.CookieManager
 import java.util.concurrent.atomic.AtomicLong
 
 object OnlyKdramaSession {
@@ -10,6 +12,7 @@ object OnlyKdramaSession {
     private const val PREFS = "onlykdrama_session"
     private const val COOKIE_KEY = "cookies"
     private const val UA_KEY = "user_agent"
+    private const val SITE_URL = "https://onlykdrama.shop/"
 
     @Volatile
     private var appContext: Context? = null
@@ -22,7 +25,7 @@ object OnlyKdramaSession {
 
     fun getSessionVersion(): Long = sessionVersion.get()
 
-    private fun preferences(context: Context) =
+    private fun preferences(context: Context): SharedPreferences =
         context.applicationContext.getSharedPreferences(
             PREFS,
             Context.MODE_PRIVATE
@@ -46,6 +49,46 @@ object OnlyKdramaSession {
 
     private fun cookieNames(cookies: String?): List<String> {
         return parseCookieMap(cookies).keys.toList()
+    }
+
+    private fun syncWebViewCookiesIfNeeded(
+        prefs: SharedPreferences,
+        existingCookies: String?
+    ): String? {
+        val webCookies = runCatching {
+            CookieManager.getInstance().getCookie(SITE_URL)
+        }.getOrNull()
+
+        if (webCookies.isNullOrBlank()) return existingCookies
+
+        val existingMap = parseCookieMap(existingCookies)
+        val webMap = parseCookieMap(webCookies)
+
+        val webClearance = webMap.entries
+            .firstOrNull { it.key.equals("cf_clearance", true) }
+            ?.value
+
+        if (webClearance.isNullOrBlank()) return existingCookies
+
+        val existingClearance = existingMap.entries
+            .firstOrNull { it.key.equals("cf_clearance", true) }
+            ?.value
+
+        if (existingClearance == webClearance && existingMap.isNotEmpty()) {
+            return existingCookies
+        }
+
+        existingMap.putAll(webMap)
+        val merged = existingMap.entries.joinToString("; ") { "${it.key}=${it.value}" }
+
+        synchronized(this) {
+            prefs.edit()
+                .putString(COOKIE_KEY, merged)
+                .commit()
+        }
+
+        Log.d(TAG, "Synced fresh cookies from WebView: ${existingMap.keys}")
+        return merged
     }
 
     fun save(
@@ -148,7 +191,8 @@ object OnlyKdramaSession {
         val context = appContext ?: return original
         val prefs = preferences(context)
 
-        val cookies = prefs.getString(COOKIE_KEY, null)
+        val storedCookies = prefs.getString(COOKIE_KEY, null)
+        val cookies = syncWebViewCookiesIfNeeded(prefs, storedCookies)
         val userAgent = prefs.getString(UA_KEY, null)
 
         return original.toMutableMap().apply {
