@@ -12,7 +12,7 @@ import java.lang.ref.WeakReference
 
 object OnlyKdramaVerification {
 
-    private const val DISMISS_COOLDOWN = 45_000L
+    private const val DISMISS_COOLDOWN = 30_000L
     private val handler = Handler(Looper.getMainLooper())
 
     @Volatile
@@ -88,23 +88,58 @@ object OnlyKdramaVerification {
             activitiesField.isAccessible = true
             val activities = activitiesField.get(activityThread) as? Map<*, *> ?: return null
 
+            var fallbackActivity: Activity? = null
+
             for (record in activities.values) {
                 if (record == null) continue
                 val recordClass = record.javaClass
+                val activityField = recordClass.getDeclaredField("activity")
+                activityField.isAccessible = true
+                val activity = activityField.get(record) as? Activity ?: continue
+
+                if (activity.isFinishing || activity.isDestroyed) continue
+
                 val pausedField = recordClass.getDeclaredField("paused")
                 pausedField.isAccessible = true
                 if (!pausedField.getBoolean(record)) {
-                    val activityField = recordClass.getDeclaredField("activity")
-                    activityField.isAccessible = true
-                    val activity = activityField.get(record) as? Activity
-                    if (activity != null && !activity.isFinishing && !activity.isDestroyed) {
-                        currentActivity = WeakReference(activity)
-                        return activity
-                    }
+                    currentActivity = WeakReference(activity)
+                    return activity
+                }
+
+                if (fallbackActivity == null) {
+                    fallbackActivity = activity
                 }
             }
-            null
+
+            fallbackActivity?.also { currentActivity = WeakReference(it) }
         }.getOrNull()
+    }
+
+    private fun openPopupWithRetry(attempt: Int = 0) {
+        val activity = findForegroundActivity()
+
+        if (activity == null) {
+            if (attempt < 15) {
+                handler.postDelayed({ openPopupWithRetry(attempt + 1) }, 150L)
+            } else {
+                completeVerification(verified = false, dismissedByUser = false)
+            }
+            return
+        }
+
+        try {
+            OnlyKdramaWebView.open(
+                context = activity,
+                clearStaleClearance = true
+            ) { verified ->
+                completeVerification(
+                    verified = verified,
+                    dismissedByUser = !verified
+                )
+            }
+        } catch (_: Exception) {
+            completeVerification(verified = false, dismissedByUser = false)
+        }
     }
 
     suspend fun awaitVerification(timeoutMs: Long = 90_000L): Boolean {
@@ -128,28 +163,7 @@ object OnlyKdramaVerification {
         }
 
         if (shouldOpen) {
-            handler.post {
-                val activity = findForegroundActivity()
-
-                if (activity == null) {
-                    completeVerification(verified = false, dismissedByUser = false)
-                    return@post
-                }
-
-                try {
-                    OnlyKdramaWebView.open(
-                        context = activity,
-                        clearStaleClearance = true
-                    ) { verified ->
-                        completeVerification(
-                            verified = verified,
-                            dismissedByUser = !verified
-                        )
-                    }
-                } catch (_: Exception) {
-                    completeVerification(verified = false, dismissedByUser = false)
-                }
-            }
+            handler.post { openPopupWithRetry(0) }
         }
 
         return withTimeoutOrNull(timeoutMs) {
