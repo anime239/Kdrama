@@ -26,6 +26,7 @@ import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.TextView
+import java.lang.ref.WeakReference
 
 object OnlyKdramaWebView {
 
@@ -38,7 +39,10 @@ object OnlyKdramaWebView {
     private const val TEXT = 0xFFF5F0FA.toInt()
     private const val MUTED = 0xFFA69CAF.toInt()
 
-    private const val WATCH_INTERVAL = 800L
+    private const val WATCH_INTERVAL = 700L
+
+    @Volatile
+    private var activeDialog: WeakReference<AlertDialog>? = null
 
     private fun extractCookieValue(cookies: String?, name: String): String? {
         return cookies.orEmpty()
@@ -149,6 +153,13 @@ object OnlyKdramaWebView {
         clearStaleClearance: Boolean = false,
         onClosed: ((verified: Boolean) -> Unit)? = null
     ) {
+        // Prevent stacked duplicate verification dialogs
+        activeDialog?.get()?.let { existing ->
+            if (existing.isShowing) {
+                runCatching { existing.dismiss() }
+            }
+        }
+
         OnlyKdramaSession.initialize(context)
 
         val density = context.resources.displayMetrics.density
@@ -310,7 +321,7 @@ object OnlyKdramaWebView {
         )
 
         val status = makeText(
-            "Tap the checkbox below — saves & closes automatically.",
+            "Complete verification below — saves & closes automatically.",
             12f,
             MUTED
         ).apply {
@@ -428,10 +439,10 @@ object OnlyKdramaWebView {
                 if (!cleaned && dialog.isShowing) {
                     dialog.dismiss()
                 }
-            }, 350L)
+            }, 300L)
         }
 
-        // Native-only check (zero JS injection so Turnstile never gets disturbed)
+        // Native-only check (no JS injection so Turnstile isn't disturbed)
         fun tryAutoSave(): Boolean {
             if (saved) return true
             if (cleaned || !dialog.isShowing) return false
@@ -439,6 +450,7 @@ object OnlyKdramaWebView {
             val currentUrl = webView.url
             if (!isExpectedHost(currentUrl)) return false
 
+            cookieManager.flush()
             val cookies = getAllSiteCookies(currentUrl)
             val clearance = extractCookieValue(cookies, "cf_clearance") ?: return false
 
@@ -507,7 +519,7 @@ object OnlyKdramaWebView {
 
             override fun onReceivedTitle(view: WebView?, title: String?) {
                 if (!saved && !cleaned) {
-                    tryAutoSave()
+                    handler.postDelayed({ tryAutoSave() }, 200L)
                 }
             }
         }
@@ -536,10 +548,12 @@ object OnlyKdramaWebView {
                 progress.visibility = View.GONE
 
                 if (!saved) {
-                    if (!tryAutoSave()) {
-                        status.text =
-                            "Complete the checkbox below — saves & closes automatically."
-                    }
+                    handler.postDelayed({
+                        if (!saved && !cleaned && !tryAutoSave()) {
+                            status.text =
+                                "Complete verification below — saves & closes automatically."
+                        }
+                    }, 250L)
                 }
             }
 
@@ -674,7 +688,7 @@ object OnlyKdramaWebView {
         // Footer
 
         val footer = makeText(
-            "Verify manually — auto-saves & closes once complete",
+            "Auto-saves & closes once verification completes",
             10f,
             MUTED
         ).apply {
@@ -761,10 +775,16 @@ object OnlyKdramaWebView {
             .setView(content)
             .create()
 
+        activeDialog = WeakReference(dialog)
+
         fun cleanup() {
             if (cleaned) return
 
             cleaned = true
+
+            if (activeDialog?.get() === dialog) {
+                activeDialog = null
+            }
 
             handler.removeCallbacksAndMessages(null)
             cookieManager.flush()
