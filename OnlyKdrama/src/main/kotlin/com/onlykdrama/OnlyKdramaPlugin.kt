@@ -33,12 +33,14 @@ class OnlyKdramaPlugin : Plugin() {
             fun dp(value: Int): Int =
                 (value * density).toInt()
 
-            val backgroundColor = 0xFF09090F.toInt()
-            val panelColor = 0xFF171421.toInt()
-            val purple = 0xFF9B55E8.toInt()
-            val textColor = 0xFFF5F0FA.toInt()
-            val mutedColor = 0xFFA69CAF.toInt()
-            val green = 0xFF8ED6A5.toInt()
+            val backgroundColor = 0xFF0D070B.toInt()
+            val panelColor = 0xFF1C1118.toInt()
+            val sakuraPink = 0xFFF48FB1.toInt()
+            val blushPink = 0xFFFFCAD4.toInt()
+            val roseBorder = 0xFF4A2536.toInt()
+            val textColor = 0xFFFFF5F8.toInt()
+            val mutedColor = 0xFFC7A8B5.toInt()
+            val mintAccent = 0xFFFFB5C5.toInt()
 
             fun rounded(
                 color: Int,
@@ -82,7 +84,7 @@ class OnlyKdramaPlugin : Plugin() {
                 background = rounded(
                     backgroundColor,
                     20,
-                    0xFF332744.toInt()
+                    roseBorder
                 )
             }
 
@@ -98,8 +100,8 @@ class OnlyKdramaPlugin : Plugin() {
                 textSize = 23f
                 typeface = Typeface.DEFAULT_BOLD
                 gravity = Gravity.CENTER
-                setTextColor(Color.WHITE)
-                background = rounded(purple, 13)
+                setTextColor(0xFF230B16.toInt())
+                background = rounded(blushPink, 14)
             }
 
             header.addView(
@@ -119,7 +121,7 @@ class OnlyKdramaPlugin : Plugin() {
                 text(
                     "OnlyKDrama",
                     19f,
-                    textColor,
+                    blushPink,
                     true
                 )
             )
@@ -141,7 +143,7 @@ class OnlyKdramaPlugin : Plugin() {
             val badge = TextView(ctx).apply {
                 text = "● ACTIVE"
                 textSize = 10f
-                setTextColor(green)
+                setTextColor(mintAccent)
                 setPadding(
                     dp(10),
                     dp(8),
@@ -149,7 +151,7 @@ class OnlyKdramaPlugin : Plugin() {
                     dp(8)
                 )
                 background = rounded(
-                    0xFF192D22.toInt(),
+                    0xFF331825.toInt(),
                     25
                 )
             }
@@ -169,8 +171,8 @@ class OnlyKdramaPlugin : Plugin() {
                 )
                 background = rounded(
                     panelColor,
-                    15,
-                    0xFF30243F.toInt()
+                    16,
+                    roseBorder
                 )
             }
 
@@ -178,7 +180,7 @@ class OnlyKdramaPlugin : Plugin() {
                 text(
                     "Session status",
                     15f,
-                    textColor,
+                    blushPink,
                     true
                 )
             )
@@ -197,8 +199,8 @@ class OnlyKdramaPlugin : Plugin() {
                     text = "●"
                     textSize = 12f
                     setTextColor(
-                        if (available) green
-                        else 0xFFE58B8B.toInt()
+                        if (available) sakuraPink
+                        else 0xFFFF7B9C.toInt()
                     )
                 }
 
@@ -223,7 +225,7 @@ class OnlyKdramaPlugin : Plugin() {
                     text(
                         if (available) "Available" else "Not available",
                         12f,
-                        if (available) green else mutedColor,
+                        if (available) blushPink else mutedColor,
                         true
                     )
                 )
@@ -275,26 +277,26 @@ class OnlyKdramaPlugin : Plugin() {
                 setTextColor(foreground)
                 minHeight = dp(48)
                 minimumHeight = dp(48)
-                background = rounded(color, 11)
+                background = rounded(color, 12)
                 stateListAnimator = null
                 elevation = 0f
             }
 
             val openButton = makeButton(
                 "Open Website",
-                purple,
-                Color.WHITE
+                sakuraPink,
+                0xFF230B16.toInt()
             )
 
             val clearButton = makeButton(
                 "Clear Session",
-                0xFF29202F.toInt(),
-                0xFFFFA0A0.toInt()
+                0xFF2D1620.toInt(),
+                0xFFFF9EB5.toInt()
             )
 
             val closeButton = makeButton(
                 "Close",
-                0xFF211B2B.toInt(),
+                0xFF24131C.toInt(),
                 textColor
             )
 
@@ -337,7 +339,7 @@ class OnlyKdramaPlugin : Plugin() {
             root.addView(actions)
 
             val footer = text(
-                "ONLYKDRAMA  •  AUTOMATIC SESSION MANAGEMENT",
+                "ONLYKDRAMA  •  SAKURA PINK SESSION UI",
                 9f,
                 mutedColor,
                 true
