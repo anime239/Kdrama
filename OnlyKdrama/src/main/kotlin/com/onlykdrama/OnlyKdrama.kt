@@ -30,16 +30,15 @@ class OnlyKdrama : MainAPI() {
         TvType.Movie
     )
 
+    // Lowercase keys so NiceHttp replaces its default headers cleanly without duplicates
     private val headers = mapOf(
-        "User-Agent" to "Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Mobile Safari/537.36",
-        "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-        "Accept-Language" to "en-US,en;q=0.9",
-        "Referer" to "$mainUrl/",
-        "Upgrade-Insecure-Requests" to "1",
-        "Sec-Fetch-Dest" to "document",
-        "Sec-Fetch-Mode" to "navigate",
-        "Sec-Fetch-Site" to "same-origin"
+        "user-agent" to "Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Mobile Safari/537.36",
+        "accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "accept-language" to "en-US,en;q=0.9"
     )
+
+    // Prevent Home reload from slamming Cloudflare with 14 simultaneous requests
+    private val requestSemaphore = Semaphore(2)
 
     override val mainPage = mainPageOf(
         "" to "New Releases",
@@ -79,16 +78,21 @@ class OnlyKdrama : MainAPI() {
     ): Document {
         val versionBeforeRequest = OnlyKdramaSession.getSessionVersion()
         val requestHeaders = OnlyKdramaSession.headers(headers)
+        val requestCookies = OnlyKdramaSession.cookieMap()
 
         Log.d(
             "OnlyKDrama",
-            "Requesting $url; version=$versionBeforeRequest; savedCookies=${OnlyKdramaSession.savedCookieNamesForLog()}"
+            "Requesting $url; version=$versionBeforeRequest; cookies=${requestCookies.keys}"
         )
 
-        val response = app.get(
-            url,
-            headers = requestHeaders
-        )
+        val response = requestSemaphore.withPermit {
+            app.get(
+                url = url,
+                headers = requestHeaders,
+                referer = "$mainUrl/",
+                cookies = requestCookies
+            )
+        }
 
         val html = response.text
         val lower = html.lowercase()
