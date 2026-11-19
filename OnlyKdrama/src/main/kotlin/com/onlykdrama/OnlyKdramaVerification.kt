@@ -172,7 +172,6 @@ object OnlyKdramaVerification {
                 if (now - lastDismissedTime < DISMISS_COOLDOWN) {
                     return false
                 }
-                OnlyKdramaSession.clearIfVersionMatches(failedSessionVersion)
                 deferred = CompletableDeferred()
                 pendingVerification = deferred
                 shouldOpen = true
