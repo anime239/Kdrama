@@ -73,11 +73,12 @@ class OnlyKdrama : MainAPI() {
         url: String,
         allowVerificationRetry: Boolean = true
     ): Document {
+        val versionBeforeRequest = OnlyKdramaSession.getSessionVersion()
         val requestHeaders = OnlyKdramaSession.headers(headers)
 
         Log.d(
             "OnlyKDrama",
-            "Requesting $url; savedCookies=${OnlyKdramaSession.savedCookieNamesForLog()}"
+            "Requesting $url; version=$versionBeforeRequest; savedCookies=${OnlyKdramaSession.savedCookieNamesForLog()}"
         )
 
         val response = app.get(
@@ -128,7 +129,7 @@ class OnlyKdrama : MainAPI() {
 
         Log.d(
             "OnlyKDrama",
-            "Response diagnostics: url=$url, code=${response.code}, htmlLength=${html.length}, homeCards=$hasHomeCards, searchCards=$hasSearchCards, detailContent=$hasDetailContent, cfMitigated=$cfMitigated, isChallenge=$isChallenge"
+            "Response diagnostics: url=$url, code=${response.code}, htmlLength=${html.length}, validPage=$hasValidPage, cfMitigated=$cfMitigated, isChallenge=$isChallenge"
         )
 
         if (isChallenge) {
@@ -138,9 +139,9 @@ class OnlyKdrama : MainAPI() {
             )
 
             if (allowVerificationRetry) {
-                OnlyKdramaSession.clear()
-
-                val verified = OnlyKdramaVerification.awaitVerification()
+                val verified = OnlyKdramaVerification.awaitVerification(
+                    failedSessionVersion = versionBeforeRequest
+                )
                 if (verified) {
                     return getDocument(url, allowVerificationRetry = false)
                 }
@@ -151,7 +152,6 @@ class OnlyKdrama : MainAPI() {
             )
         }
 
-        // Persist any refreshed session cookies sent back by the server
         if (response.cookies.isNotEmpty()) {
             OnlyKdramaSession.mergeCookies(response.cookies)
         }
@@ -728,7 +728,7 @@ class OnlyKdrama : MainAPI() {
                         .ifBlank { element.attr("title").trim() }
                         .ifBlank { element.attr("aria-label").trim() }
 
-                    val sourceText = "$fileName$provider"
+                    val sourceText = "$fileName $provider"
 
                     val match = Regex(
                         """(?i)\bS\s*0*(\d{1,2})\s*E\s*0*(\d{1,3})\b"""
