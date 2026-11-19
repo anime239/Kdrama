@@ -38,6 +38,8 @@ object OnlyKdramaWebView {
     private const val TEXT = 0xFFF5F0FA.toInt()
     private const val MUTED = 0xFFA69CAF.toInt()
 
+    private const val WATCH_INTERVAL = 800L
+
     private fun extractCookieValue(cookies: String?, name: String): String? {
         return cookies.orEmpty()
             .split(";")
@@ -177,6 +179,14 @@ object OnlyKdramaWebView {
         val cookieManager = CookieManager.getInstance()
         cookieManager.setAcceptCookie(true)
 
+        val initialClearance = extractCookieValue(
+            mergeCookies(
+                cookieManager.getCookie(HOME_URL),
+                cookieManager.getCookie(BASE_DOMAIN_URL)
+            ),
+            "cf_clearance"
+        )
+
         val handler = Handler(Looper.getMainLooper())
 
         var cleaned = false
@@ -243,7 +253,7 @@ object OnlyKdramaWebView {
 
         titleArea.addView(
             makeText(
-                "MANUAL VERIFICATION",
+                "SECURITY VERIFICATION",
                 10f,
                 MUTED,
                 true
@@ -256,7 +266,7 @@ object OnlyKdramaWebView {
         )
 
         val secureBadge = TextView(context).apply {
-            text = "● MANUAL"
+            text = "● SECURE"
             textSize = 11f
             setTextColor(0xFFBBA0FF.toInt())
             setPadding(
@@ -300,7 +310,7 @@ object OnlyKdramaWebView {
         )
 
         val status = makeText(
-            "Verify below until the site loads, then tap Save & Close.",
+            "Tap the checkbox below — saves & closes automatically.",
             12f,
             MUTED
         ).apply {
@@ -367,36 +377,33 @@ object OnlyKdramaWebView {
                 host.endsWith(".$targetHost", true)
         }
 
-        // Manual session save
+        fun isChallengeTitle(title: String?): Boolean {
+            val lower = title.orEmpty().trim().lowercase()
+            if (lower.isBlank()) return true
+            if (lower.startsWith("http://") || lower.startsWith("https://")) return true
+            if (lower == "onlykdrama.shop" || lower == "onlykdrama.shop/") return true
+            return lower.contains("just a moment") ||
+                lower.contains("attention required") ||
+                lower.contains("verify") ||
+                lower.contains("cloudflare") ||
+                lower.contains("checking your browser") ||
+                lower.contains("security") ||
+                lower.contains("access denied") ||
+                lower.contains("error 1015")
+        }
 
-        fun saveSessionManually() {
-            if (saved || cleaned) return
-
-            cookieManager.flush()
-
-            val currentUrl = webView.url
-            val cookies = mergeCookies(
+        fun getAllSiteCookies(currentUrl: String?): String {
+            return mergeCookies(
                 cookieManager.getCookie(HOME_URL),
                 cookieManager.getCookie(BASE_DOMAIN_URL),
                 currentUrl?.takeIf { isExpectedHost(it) }?.let {
                     cookieManager.getCookie(it)
                 }
             )
+        }
 
-            if (cookies.isBlank()) {
-                status.text =
-                    "No site cookies found yet. Wait for the page to load first."
-                return
-            }
-
-            val hasClearance = extractCookieValue(cookies, "cf_clearance") != null
-
-            if (!hasClearance && !warnedNoClearance) {
-                warnedNoClearance = true
-                status.text =
-                    "No cf_clearance cookie yet. Complete the check, or tap Save & Close again to save anyway."
-                return
-            }
+        fun completeSaveAndClose(cookies: String) {
+            cookieManager.flush()
 
             val result = OnlyKdramaSession.save(
                 context,
@@ -405,7 +412,7 @@ object OnlyKdramaWebView {
             )
 
             if (!result) {
-                status.text = "Failed to save session. Please try again."
+                status.text = "Failed to save session. Tap Save & Close to retry."
                 return
             }
 
@@ -413,15 +420,72 @@ object OnlyKdramaWebView {
 
             OnlyKdramaVerification.sessionVerified()
 
-            status.text = "Session saved! Closing..."
-            secureBadge.text = "✓ SAVED"
+            status.text = "Verified! Session saved — closing..."
+            secureBadge.text = "✓ VERIFIED"
             secureBadge.setTextColor(0xFF9BE8B1.toInt())
 
             handler.postDelayed({
                 if (!cleaned && dialog.isShowing) {
                     dialog.dismiss()
                 }
-            }, 250L)
+            }, 350L)
+        }
+
+        // Native-only check (zero JS injection so Turnstile never gets disturbed)
+        fun tryAutoSave(): Boolean {
+            if (saved) return true
+            if (cleaned || !dialog.isShowing) return false
+
+            val currentUrl = webView.url
+            if (!isExpectedHost(currentUrl)) return false
+
+            val cookies = getAllSiteCookies(currentUrl)
+            val clearance = extractCookieValue(cookies, "cf_clearance") ?: return false
+
+            if (clearStaleClearance && initialClearance != null && clearance == initialClearance) {
+                return false
+            }
+
+            // Wait until the post-verification redirect actually lands on the real site
+            if (isChallengeTitle(webView.title)) {
+                status.text = "Verification accepted! Loading site..."
+                return false
+            }
+
+            completeSaveAndClose(cookies)
+            return true
+        }
+
+        val cookieWatcher = object : Runnable {
+            override fun run() {
+                if (cleaned || saved || !dialog.isShowing) return
+                if (!tryAutoSave()) {
+                    handler.postDelayed(this, WATCH_INTERVAL)
+                }
+            }
+        }
+
+        // Manual fallback save button
+        fun saveSessionManually() {
+            if (saved || cleaned) return
+
+            cookieManager.flush()
+            val cookies = getAllSiteCookies(webView.url)
+
+            if (cookies.isBlank()) {
+                status.text = "No site cookies found yet. Wait for the page to load."
+                return
+            }
+
+            val hasClearance = extractCookieValue(cookies, "cf_clearance") != null
+            if (!hasClearance && !warnedNoClearance) {
+                warnedNoClearance = true
+                status.text =
+                    "No cf_clearance cookie yet. Complete the check, or tap Save & Close again."
+                return
+            }
+
+            completeSaveAndClose(cookies)
         }
 
         // WebChromeClient
@@ -441,6 +505,12 @@ object OnlyKdramaWebView {
                         View.VISIBLE
                     }
             }
+
+            override fun onReceivedTitle(view: WebView?, title: String?) {
+                if (!saved && !cleaned) {
+                    tryAutoSave()
+                }
+            }
         }
 
         // WebViewClient
@@ -453,7 +523,9 @@ object OnlyKdramaWebView {
                 favicon: android.graphics.Bitmap?
             ) {
                 warnedNoClearance = false
-                status.text = "Loading OnlyKDrama..."
+                if (!saved) {
+                    status.text = "Loading OnlyKDrama..."
+                }
                 progress.visibility = View.VISIBLE
             }
 
@@ -465,8 +537,10 @@ object OnlyKdramaWebView {
                 progress.visibility = View.GONE
 
                 if (!saved) {
-                    status.text =
-                        "Once the website loads, tap Save & Close."
+                    if (!tryAutoSave()) {
+                        status.text =
+                            "Complete the checkbox below — saves & closes automatically."
+                    }
                 }
             }
 
@@ -601,7 +675,7 @@ object OnlyKdramaWebView {
         // Footer
 
         val footer = makeText(
-            "Complete verification manually, then tap Save & Close",
+            "Verify manually — auto-saves & closes once complete",
             10f,
             MUTED
         ).apply {
@@ -721,7 +795,7 @@ object OnlyKdramaWebView {
             if (saved || cleaned) return@setOnClickListener
 
             warnedNoClearance = false
-            secureBadge.text = "● MANUAL"
+            secureBadge.text = "● SECURE"
             secureBadge.setTextColor(0xFFBBA0FF.toInt())
             status.text = "Refreshing website..."
 
@@ -785,6 +859,8 @@ object OnlyKdramaWebView {
             webView.onResume()
             webView.requestFocus()
             webView.loadUrl(HOME_URL)
+
+            handler.postDelayed(cookieWatcher, WATCH_INTERVAL)
         }
 
         content.post {
