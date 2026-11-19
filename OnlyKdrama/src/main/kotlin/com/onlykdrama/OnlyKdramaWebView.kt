@@ -14,6 +14,7 @@ import android.os.Looper
 import android.view.Gravity
 import android.view.KeyEvent
 import android.view.View
+import android.view.WindowManager
 import android.webkit.CookieManager
 import android.webkit.SslErrorHandler
 import android.webkit.WebChromeClient
@@ -75,22 +76,31 @@ object OnlyKdramaWebView {
         return extractCookieValue(cookies, "cf_clearance") != null
     }
 
-    fun clearClearanceCookie() {
+    private fun clearClearanceCookie(
+        handler: Handler,
+        onDone: () -> Unit
+    ) {
         val manager = CookieManager.getInstance()
         val expired = "Expires=Thu, 01 Jan 1970 00:00:00 GMT; Max-Age=0"
-        val domains = listOf(
-            HOME_URL,
-            BASE_DOMAIN_URL,
-            "https://.onlykdrama.shop/",
-            "https://www.onlykdrama.shop/"
+        val targets = listOf(
+            HOME_URL to "cf_clearance=; $expired; path=/",
+            HOME_URL to "cf_clearance=; $expired; domain=.onlykdrama.shop; path=/",
+            BASE_DOMAIN_URL to "cf_clearance=; $expired; path=/",
+            "https://www.onlykdrama.shop/" to "cf_clearance=; $expired; path=/"
         )
-        for (domain in domains) {
-            manager.setCookie(domain, "cf_clearance=; $expired; path=/")
-            manager.setCookie(domain, "cf_clearance=; $expired; domain=.onlykdrama.shop; path=/")
-            manager.setCookie(domain, "cf_clearance=; $expired; path=/; Secure; SameSite=None")
-            manager.setCookie(domain, "cf_clearance=; $expired; domain=.onlykdrama.shop; path=/; Secure; SameSite=None")
+
+        var remaining = targets.size
+        for ((url, cookie) in targets) {
+            manager.setCookie(url, cookie) {
+                handler.post {
+                    remaining -= 1
+                    if (remaining <= 0) {
+                        manager.flush()
+                        onDone()
+                    }
+                }
+            }
         }
-        manager.flush()
     }
 
     fun clearSiteCookies(
@@ -151,11 +161,6 @@ object OnlyKdramaWebView {
 
         val cookieManager = CookieManager.getInstance()
         cookieManager.setAcceptCookie(true)
-
-        if (clearStaleClearance) {
-            clearClearanceCookie()
-            OnlyKdramaSession.clear(context)
-        }
 
         val initialClearance = extractCookieValue(
             mergeCookies(
@@ -257,11 +262,13 @@ object OnlyKdramaWebView {
             progressTintList = ColorStateList.valueOf(PURPLE)
         }
 
-        // WebView (keep native User-Agent intact so Client Hints match Turnstile)
+        // WebView
         val webView = WebView(context).apply {
             setBackgroundColor(Color.BLACK)
             overScrollMode = View.OVER_SCROLL_NEVER
             visibility = View.VISIBLE
+            isFocusable = true
+            isFocusableInTouchMode = true
         }
 
         cookieManager.setAcceptThirdPartyCookies(webView, true)
@@ -573,7 +580,6 @@ object OnlyKdramaWebView {
 
             webView.stopLoading()
             webView.onPause()
-            webView.pauseTimers()
             webView.loadUrl("about:blank")
             webView.removeAllViews()
             webView.destroy()
@@ -622,24 +628,41 @@ object OnlyKdramaWebView {
         dialog.show()
 
         dialog.window?.apply {
+            clearFlags(
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                    WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM
+            )
             setBackgroundDrawableResource(android.R.color.transparent)
             setGravity(Gravity.CENTER)
             setLayout(windowWidth, windowHeight)
         }
 
-        content.post {
-            if (cleaned || !dialog.isShowing) return@post
+        fun startLoading() {
+            if (cleaned || !dialog.isShowing) return
 
             content.requestLayout()
             webView.requestLayout()
             webView.invalidate()
 
             webView.onResume()
-            webView.resumeTimers()
-
+            webView.requestFocus()
             webView.loadUrl(HOME_URL)
 
-            handler.postDelayed(autoCheck, 700L)
+            handler.postDelayed(autoCheck, 1000L)
+        }
+
+        content.post {
+            if (cleaned || !dialog.isShowing) return@post
+
+            if (clearStaleClearance) {
+                webView.clearCache(true)
+                OnlyKdramaSession.clear(context)
+                clearClearanceCookie(handler) {
+                    startLoading()
+                }
+            } else {
+                startLoading()
+            }
         }
     }
 }
