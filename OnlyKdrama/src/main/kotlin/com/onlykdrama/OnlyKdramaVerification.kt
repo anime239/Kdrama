@@ -12,7 +12,7 @@ import java.lang.ref.WeakReference
 
 object OnlyKdramaVerification {
 
-    private const val DISMISS_COOLDOWN = 30_000L
+    private const val DISMISS_COOLDOWN = 15_000L
     private val handler = Handler(Looper.getMainLooper())
 
     @Volatile
@@ -51,7 +51,10 @@ object OnlyKdramaVerification {
                         }
                     }
 
-                    override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) {
+                    override fun onActivityCreated(
+                        activity: Activity,
+                        savedInstanceState: Bundle?
+                    ) {
                         if (!activity.isFinishing && !activity.isDestroyed) {
                             currentActivity = WeakReference(activity)
                         }
@@ -64,7 +67,12 @@ object OnlyKdramaVerification {
                     }
 
                     override fun onActivityStopped(activity: Activity) {}
-                    override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) {}
+
+                    override fun onActivitySaveInstanceState(
+                        activity: Activity,
+                        outState: Bundle
+                    ) {}
+
                     override fun onActivityDestroyed(activity: Activity) {}
                 }
             )
