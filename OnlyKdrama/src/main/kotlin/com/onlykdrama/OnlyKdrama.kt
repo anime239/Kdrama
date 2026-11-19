@@ -1,4 +1,3 @@
-
 package com.onlykdrama
 
 import android.util.Log
@@ -70,7 +69,10 @@ class OnlyKdrama : MainAPI() {
         return fixUrl(value)
     }
 
-    private suspend fun getDocument(url: String): Document {
+    private suspend fun getDocument(
+        url: String,
+        allowVerificationRetry: Boolean = true
+    ): Document {
         val requestHeaders = OnlyKdramaSession.headers(headers)
 
         Log.d(
@@ -87,14 +89,13 @@ class OnlyKdrama : MainAPI() {
         val lower = html.lowercase()
         val document = response.document
 
-        val hasHomeCards =
-            document.select("article.item").isNotEmpty()
+        val hasHomeCards = document.select("article.item").isNotEmpty()
+        val hasSearchCards = document.select(".search-page .result-item").isNotEmpty()
+        val hasDetailContent = document.selectFirst("#single .sheader .data h1") != null
+        val hasValidPage = hasHomeCards || hasSearchCards || hasDetailContent
 
-        val hasSearchCards =
-            document.select(".search-page .result-item").isNotEmpty()
-
-        val hasDetailContent =
-            document.selectFirst("#single .sheader .data h1") != null
+        val cfMitigated = response.headers["cf-mitigated"]
+            ?.contains("challenge", true) == true
 
         val hasCfChallengeToken =
             lower.contains("cf-chl-") ||
@@ -102,33 +103,38 @@ class OnlyKdrama : MainAPI() {
 
         val hasVerificationText =
             lower.contains("just a moment") ||
-                lower.contains("verify you are human")
+                lower.contains("verify you are human") ||
+                lower.contains("checking your browser")
 
         val hasChallengePlatform =
             lower.contains("challenge-platform")
 
         val isChallenge =
-            hasCfChallengeToken ||
-                hasVerificationText ||
-                (
-                    hasChallengePlatform &&
-                        !hasHomeCards &&
-                        !hasSearchCards &&
-                        !hasDetailContent
-                    )
+            !hasValidPage && (
+                cfMitigated ||
+                    hasCfChallengeToken ||
+                    hasVerificationText ||
+                    hasChallengePlatform ||
+                    response.code == 403 ||
+                    response.code == 503
+                )
 
         Log.d(
             "OnlyKDrama",
-            "Response diagnostics: url=$url, htmlLength=${html.length}, homeCards=$hasHomeCards, searchCards=$hasSearchCards, detailContent=$hasDetailContent, cfChallengeToken=$hasCfChallengeToken, verificationText=$hasVerificationText, challengePlatform=$hasChallengePlatform, isChallenge=$isChallenge"
+            "Response diagnostics: url=$url, code=${response.code}, htmlLength=${html.length}, validPage=$hasValidPage, cfMitigated=$cfMitigated, isChallenge=$isChallenge"
         )
 
         if (isChallenge) {
-            Log.e(
-                "OnlyKDrama",
-                "Cloudflare challenge detected: $url"
-            )
+            Log.e("OnlyKDrama", "Cloudflare challenge detected: $url")
 
-            OnlyKdramaVerification.challengeDetected()
+            if (allowVerificationRetry) {
+                OnlyKdramaSession.clear()
+
+                val verified = OnlyKdramaVerification.awaitVerification()
+                if (verified) {
+                    return getDocument(url, allowVerificationRetry = false)
+                }
+            }
 
             throw ErrorLoadingException(
                 "Cloudflare verification required. Complete verification in the OnlyKDrama popup and retry."
@@ -144,36 +150,7 @@ class OnlyKdrama : MainAPI() {
             .joinToString(" ")
             .lowercase()
 
-        val isRateLimited =
-            message.contains("error 1015") ||
-                message.contains("you are being rate limited") ||
-                message.contains("rate limited") ||
-                message.contains("too many requests")
-
-        if (isRateLimited) {
-            Log.e(
-                "OnlyKDrama",
-                "Extractor rate limited: $message"
-            )
-            return
-        }
-
-        val isChallenge =
-            message.contains("cf-chl-") ||
-                message.contains("__cf_chl_tk") ||
-                message.contains("challenge-platform") ||
-                message.contains("just a moment") ||
-                message.contains("verify you are human") ||
-                message.contains("cloudflare challenge")
-
-        if (isChallenge) {
-            Log.e(
-                "OnlyKDrama",
-                "Cloudflare challenge detected during extraction"
-            )
-
-            OnlyKdramaVerification.challengeDetected()
-        }
+        Log.e("OnlyKDrama", "Extractor error: $message")
     }
 
     private fun getPoster(article: Element): String? {
@@ -190,11 +167,7 @@ class OnlyKdrama : MainAPI() {
 
         for (attribute in attributes) {
             val value = image.attr(attribute).trim()
-
-            if (value.isBlank() || value.startsWith("data:")) {
-                continue
-            }
-
+            if (value.isBlank() || value.startsWith("data:")) continue
             return absolute(value)
         }
 
@@ -215,20 +188,12 @@ class OnlyKdrama : MainAPI() {
     }
 
     private fun getDramaTitle(article: Element): String {
-        return article.selectFirst(
-            ".data h3 a"
-        )?.text()?.trim()
-            ?.ifBlank { null }
-            ?: article.selectFirst(
-                ".poster img"
-            )?.attr("alt")?.trim()
-                ?.ifBlank { null }
+        return article.selectFirst(".data h3 a")?.text()?.trim()?.ifBlank { null }
+            ?: article.selectFirst(".poster img")?.attr("alt")?.trim()?.ifBlank { null }
             ?: ""
     }
 
-    private fun parseHome(
-        document: Document
-    ): List<SearchResponse> {
+    private fun parseHome(document: Document): List<SearchResponse> {
         val results = mutableListOf<SearchResponse>()
         val seen = mutableSetOf<String>()
 
@@ -239,10 +204,7 @@ class OnlyKdrama : MainAPI() {
             if (title.isBlank() || !seen.add(url)) continue
 
             val poster = getPoster(article)
-            val isMovie = url.contains("/movies/") ||
-                article.hasClass("movies") ||
-                title.contains("movie", true) ||
-                title.contains("film", true)
+            val isMovie = url.contains("/movies/") || article.hasClass("movies")
 
             val response = if (isMovie) {
                 newMovieSearchResponse(title, url, TvType.Movie) {
@@ -274,27 +236,19 @@ class OnlyKdrama : MainAPI() {
 
         for (attribute in attributes) {
             val value = image.attr(attribute).trim()
-
-            if (value.isBlank() || value.startsWith("data:")) {
-                continue
-            }
-
+            if (value.isBlank() || value.startsWith("data:")) continue
             return absolute(value)
         }
 
         return null
     }
 
-    private fun parseSearch(
-        document: Document
-    ): List<SearchResponse> {
+    private fun parseSearch(document: Document): List<SearchResponse> {
         val results = mutableListOf<SearchResponse>()
         val seen = mutableSetOf<String>()
 
         for (card in document.select(".search-page .result-item")) {
-            val link = card.selectFirst(
-                ".details .title a[href], .image a[href]"
-            ) ?: continue
+            val link = card.selectFirst(".details .title a[href], .image a[href]") ?: continue
 
             val url = absolute(link.attr("href")) ?: continue
             val isMovie = url.contains("/movies/")
@@ -303,13 +257,8 @@ class OnlyKdrama : MainAPI() {
             if (!isMovie && !isDrama) continue
             if (!seen.add(url)) continue
 
-            val title = card.selectFirst(
-                ".details .title a"
-            )?.text()?.trim()
-                ?.ifBlank { null }
-                ?: card.selectFirst(".image img")
-                    ?.attr("alt")?.trim()
-                    ?.ifBlank { null }
+            val title = card.selectFirst(".details .title a")?.text()?.trim()?.ifBlank { null }
+                ?: card.selectFirst(".image img")?.attr("alt")?.trim()?.ifBlank { null }
                 ?: continue
 
             val poster = getSearchPoster(card)
@@ -331,50 +280,27 @@ class OnlyKdrama : MainAPI() {
             results.addAll(parseHome(document))
         }
 
-        Log.d(
-            "OnlyKDrama",
-            "Advanced search completed: ${results.size} results found"
-        )
-
         return results
     }
 
-    override suspend fun search(
-        query: String
-    ): List<SearchResponse> {
-        val encodedQuery = URLEncoder.encode(
-            query.trim(),
-            "UTF-8"
-        )
-
+    override suspend fun search(query: String): List<SearchResponse> {
+        val encodedQuery = URLEncoder.encode(query.trim(), "UTF-8")
         val url = "$mainUrl/advance-search/?q=$encodedQuery&type=all&lang=&genre=&year=&min_rating=0&sort=latest"
-
-        Log.d("OnlyKDrama", "Advanced search URL: $url")
-
         val document = getDocument(url)
         return parseSearch(document)
     }
 
-    private fun getPageUrl(
-        base: String,
-        page: Int
-    ): String {
+    private fun getPageUrl(base: String, page: Int): String {
         if (page <= 1) return base
-
         return "${base.trimEnd('/')}/page/$page/"
     }
 
-    private fun hasNextPage(
-        document: Document,
-        page: Int
-    ): Boolean {
-        return document.select("a[href]").any { link ->
+    private fun hasNextPage(document: Document, page: Int): Boolean {
+        val paginationLinks = document.select(".pagination a[href], .nav-links a[href]")
+        return paginationLinks.any { link ->
             val href = link.attr("href")
-
-            val nextPage = Regex(
-                """/page/(\d+)/?""",
-                RegexOption.IGNORE_CASE
-            ).find(href)
+            val nextPage = Regex("""/page/(\d+)/?""", RegexOption.IGNORE_CASE)
+                .find(href)
                 ?.groupValues
                 ?.getOrNull(1)
                 ?.toIntOrNull()
@@ -420,9 +346,7 @@ class OnlyKdrama : MainAPI() {
     }
 
     private fun getDetailPoster(document: Document): String? {
-        val image = document.selectFirst(
-            "#single .sheader .poster img"
-        ) ?: return null
+        val image = document.selectFirst("#single .sheader .poster img") ?: return null
 
         val attributes = listOf(
             "src",
@@ -434,11 +358,7 @@ class OnlyKdrama : MainAPI() {
 
         for (attribute in attributes) {
             val value = image.attr(attribute).trim()
-
-            if (value.isBlank() || value.startsWith("data:")) {
-                continue
-            }
-
+            if (value.isBlank() || value.startsWith("data:")) continue
             return absolute(value)
         }
 
@@ -449,9 +369,7 @@ class OnlyKdrama : MainAPI() {
         val info = document.selectFirst("#info") ?: return null
 
         val synopsisBox = info.select(".sbox").firstOrNull {
-            it.selectFirst("h2")?.text()
-                ?.trim()
-                ?.equals("Synopsis", true) == true
+            it.selectFirst("h2")?.text()?.trim()?.equals("Synopsis", true) == true
         } ?: return null
 
         val content = synopsisBox.selectFirst(".wp-content") ?: return null
@@ -467,19 +385,15 @@ class OnlyKdrama : MainAPI() {
     }
 
     private fun getTags(document: Document): List<String> {
-        return document.select(
-            "#single .sheader .data .sgeneros a"
-        ).map {
-            it.text().trim()
-        }.filter {
-            it.isNotBlank()
-        }.distinct()
+        return document.select("#single .sheader .data .sgeneros a")
+            .map { it.text().trim() }
+            .filter { it.isNotBlank() }
+            .distinct()
     }
 
     private fun getYear(document: Document): Int? {
-        val date = document.selectFirst(
-            "#single .sheader .data .extra .date"
-        )?.text().orEmpty()
+        val date = document.selectFirst("#single .sheader .data .extra .date")
+            ?.text().orEmpty()
 
         return Regex("[0-9]{4}")
             .find(date)
@@ -488,18 +402,16 @@ class OnlyKdrama : MainAPI() {
     }
 
     private fun getRating(document: Document): Int? {
-        return document.selectFirst(
-            "#single .sheader .data .dt_rating_vgs"
-        )?.text()
+        return document.selectFirst("#single .sheader .data .dt_rating_vgs")
+            ?.text()
             ?.trim()
             ?.toFloatOrNull()
             ?.toInt()
     }
 
     private fun parseMovieLinks(document: Document): String {
-        val root = document.selectFirst(
-            "#info .wp-content > .wp-block-ub-content-toggle-block"
-        ) ?: return JSONObject().put("links", JSONArray()).toString()
+        val root = document.selectFirst("#info .wp-content .wp-block-ub-content-toggle-block")
+            ?: return JSONObject().put("links", JSONArray()).toString()
 
         val links = JSONArray()
         val seenUrls = mutableSetOf<String>()
@@ -522,9 +434,7 @@ class OnlyKdrama : MainAPI() {
                 ".wp-block-ub-content-toggle-accordion-content-wrap"
             ) ?: continue
 
-            for (element in content.select(
-                "a[href], [data-href], [data-url]"
-            )) {
+            for (element in content.select("a[href], [data-href], [data-url]")) {
                 val rawUrl = listOf(
                     element.attr("href"),
                     element.attr("data-href"),
@@ -638,9 +548,7 @@ class OnlyKdrama : MainAPI() {
                 }
 
                 for ((provider, providerContent) in providers) {
-                    for (element in providerContent.select(
-                        "a[href], [data-href], [data-url]"
-                    )) {
+                    for (element in providerContent.select("a[href], [data-href], [data-url]")) {
                         val rawUrl = listOf(
                             element.attr("href"),
                             element.attr("data-href"),
@@ -669,14 +577,15 @@ class OnlyKdrama : MainAPI() {
 
                 if (links.length() == 0) continue
 
-                val episodeNumber = Regex("[0-9]+")
+                val episodeNumber = Regex("""(?i)\bE(?:p(?:isode)?)?\s*0*(\d+)""")
                     .find(episodeTitle)
-                    ?.value
-                    ?.toIntOrNull() ?: index
+                    ?.groupValues?.getOrNull(1)
+                    ?.toIntOrNull()
+                    ?: Regex("[0-9]+").find(episodeTitle)?.value?.toIntOrNull()
+                    ?: index
 
-                val seasonNumber = Regex(
-                    """(?i)\bS(?:eason)?\s*0*(\d+)"""
-                ).find(episodeTitle)
+                val seasonNumber = Regex("""(?i)\bS(?:eason)?\s*0*(\d+)""")
+                    .find(episodeTitle)
                     ?.groupValues?.getOrNull(1)
                     ?.toIntOrNull() ?: 1
 
@@ -691,11 +600,7 @@ class OnlyKdrama : MainAPI() {
                     episode = episodeNumber
                     posterUrl = poster
                     description = plot?.take(180)?.let {
-                        if (plot.length > 180) {
-                            "${it.substringBeforeLast(" ")}..."
-                        } else {
-                            it
-                        }
+                        if (plot.length > 180) "${it.substringBeforeLast(" ")}..." else it
                     }
                 })
             }
@@ -720,9 +625,7 @@ class OnlyKdrama : MainAPI() {
                     ".wp-block-ub-content-toggle-accordion-content-wrap"
                 ) ?: continue
 
-                for (element in content.select(
-                    "a[href], [data-href], [data-url]"
-                )) {
+                for (element in content.select("a[href], [data-href], [data-url]")) {
                     val rawUrl = listOf(
                         element.attr("href"),
                         element.attr("data-href"),
@@ -761,7 +664,7 @@ class OnlyKdrama : MainAPI() {
                 }
             }
 
-            for ((key, group) in episodeGroups) {
+            for ((_, group) in episodeGroups) {
                 if (group.links.length() == 0) continue
 
                 val episodeTitle = "Episode ${group.episode}"
@@ -777,11 +680,7 @@ class OnlyKdrama : MainAPI() {
                     episode = group.episode
                     posterUrl = poster
                     description = plot?.take(180)?.let {
-                        if (plot.length > 180) {
-                            "${it.substringBeforeLast(" ")}..."
-                        } else {
-                            it
-                        }
+                        if (plot.length > 180) "${it.substringBeforeLast(" ")}..." else it
                     }
                 })
             }
@@ -796,9 +695,8 @@ class OnlyKdrama : MainAPI() {
     override suspend fun load(url: String): LoadResponse? {
         val document = getDocument(url)
 
-        val title = document.selectFirst(
-            "#single .sheader .data h1"
-        )?.text()
+        val title = document.selectFirst("#single .sheader .data h1")
+            ?.text()
             ?.trim()
             ?.ifBlank { null }
             ?: document.selectFirst("h1")?.text()?.trim()
@@ -820,9 +718,7 @@ class OnlyKdrama : MainAPI() {
             }.getOrNull()
 
             if (movieLinks == null || movieLinks.length() == 0) {
-                throw ErrorLoadingException(
-                    "No movie download links found on OnlyKDrama."
-                )
+                throw ErrorLoadingException("No movie download links found on OnlyKDrama.")
             }
 
             return newMovieLoadResponse(
@@ -839,16 +735,10 @@ class OnlyKdrama : MainAPI() {
             }
         }
 
-        val episodes = parseEpisodes(
-            document,
-            poster,
-            plot
-        )
+        val episodes = parseEpisodes(document, poster, plot)
 
         if (episodes.isEmpty()) {
-            throw ErrorLoadingException(
-                "No episode download links found on this drama page."
-            )
+            throw ErrorLoadingException("No episode download links found on this drama page.")
         }
 
         return newTvSeriesLoadResponse(
@@ -901,11 +791,6 @@ class OnlyKdrama : MainAPI() {
                 async {
                     semaphore.withPermit {
                         try {
-                            Log.d(
-                                "OnlyKDrama",
-                                "Extracting provider=$provider; file=$fileName"
-                            )
-
                             loadExtractor(
                                 url,
                                 mainUrl,
@@ -920,26 +805,15 @@ class OnlyKdrama : MainAPI() {
                                     callback(link)
                                 }
                             }
-
                         } catch (e: CancellationException) {
                             throw e
                         } catch (e: Exception) {
                             handleExtractorChallenge(e)
-
-                            Log.e(
-                                "OnlyKDrama",
-                                "Extractor failed: provider=$provider; file=$fileName; ${e.message}"
-                            )
                         }
                     }
                 }
             }.awaitAll()
         }
-
-        Log.d(
-            "OnlyKDrama",
-            "Extraction completed: ${tasks.size} provider links processed; success=${loaded.get()}"
-        )
 
         return loaded.get()
     }
