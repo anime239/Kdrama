@@ -2,6 +2,7 @@ package com.onlykdrama
 
 import android.content.Context
 import android.util.Log
+import java.util.concurrent.atomic.AtomicLong
 
 object OnlyKdramaSession {
 
@@ -13,9 +14,13 @@ object OnlyKdramaSession {
     @Volatile
     private var appContext: Context? = null
 
+    private val sessionVersion = AtomicLong(0L)
+
     fun initialize(context: Context) {
         appContext = context.applicationContext
     }
+
+    fun getSessionVersion(): Long = sessionVersion.get()
 
     private fun preferences(context: Context) =
         context.applicationContext.getSharedPreferences(
@@ -56,18 +61,24 @@ object OnlyKdramaSession {
         val formatted = cleanedMap.entries.joinToString("; ") { "${it.key}=${it.value}" }
         val names = cleanedMap.keys.toList()
 
-        val editor = preferences(context).edit()
-            .putString(COOKIE_KEY, formatted)
+        val saved = synchronized(this) {
+            val editor = preferences(context).edit()
+                .putString(COOKIE_KEY, formatted)
 
-        if (!userAgent.isNullOrBlank()) {
-            editor.putString(UA_KEY, userAgent)
+            if (!userAgent.isNullOrBlank()) {
+                editor.putString(UA_KEY, userAgent)
+            }
+
+            val ok = editor.commit()
+            if (ok) {
+                sessionVersion.incrementAndGet()
+            }
+            ok
         }
-
-        val saved = editor.commit()
 
         Log.d(
             TAG,
-            "Session save=$saved, cookieNames=$names, cf_clearance=${names.any { it.equals("cf_clearance", true) }}"
+            "Session save=$saved, version=${sessionVersion.get()}, cookieNames=$names, cf_clearance=${names.any { it.equals("cf_clearance", true) }}"
         )
 
         return saved
@@ -151,16 +162,29 @@ object OnlyKdramaSession {
         }
     }
 
+    fun clearIfVersionMatches(expectedVersion: Long) {
+        val context = appContext ?: return
+        synchronized(this) {
+            if (sessionVersion.get() != expectedVersion) {
+                Log.d(TAG, "Skip clear: session already updated to version=${sessionVersion.get()}")
+                return
+            }
+            clear(context)
+        }
+    }
+
     fun clear() {
         val context = appContext ?: return
         clear(context)
     }
 
     fun clear(context: Context) {
-        preferences(context).edit()
-            .remove(COOKIE_KEY)
-            .remove(UA_KEY)
-            .commit()
+        synchronized(this) {
+            preferences(context).edit()
+                .remove(COOKIE_KEY)
+                .remove(UA_KEY)
+                .commit()
+        }
 
         Log.d(TAG, "Saved session cleared")
     }
