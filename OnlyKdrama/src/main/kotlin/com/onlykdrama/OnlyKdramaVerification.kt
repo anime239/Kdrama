@@ -138,7 +138,7 @@ object OnlyKdramaVerification {
         try {
             OnlyKdramaWebView.open(
                 context = activity,
-                clearStaleClearance = true
+                clearStaleClearance = false
             ) { verified ->
                 completeVerification(
                     verified = verified,
@@ -150,11 +150,19 @@ object OnlyKdramaVerification {
         }
     }
 
-    suspend fun awaitVerification(timeoutMs: Long = 90_000L): Boolean {
+    suspend fun awaitVerification(
+        failedSessionVersion: Long,
+        timeoutMs: Long = 90_000L
+    ): Boolean {
         val deferred: CompletableDeferred<Boolean>
         val shouldOpen: Boolean
 
         synchronized(this) {
+            // Another parallel request already saved a fresh session while this one was in flight
+            if (OnlyKdramaSession.getSessionVersion() > failedSessionVersion) {
+                return true
+            }
+
             val existing = pendingVerification
             if (existing != null && !existing.isCompleted) {
                 deferred = existing
@@ -164,6 +172,7 @@ object OnlyKdramaVerification {
                 if (now - lastDismissedTime < DISMISS_COOLDOWN) {
                     return false
                 }
+                OnlyKdramaSession.clearIfVersionMatches(failedSessionVersion)
                 deferred = CompletableDeferred()
                 pendingVerification = deferred
                 shouldOpen = true
@@ -194,6 +203,8 @@ object OnlyKdramaVerification {
     }
 
     fun sessionVerified() {
-        completeVerification(verified = true, dismissedByUser = false)
+        synchronized(this) {
+            lastDismissedTime = 0L
+        }
     }
 }
