@@ -34,7 +34,11 @@ class OnlyKdrama : MainAPI() {
         "User-Agent" to "Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Mobile Safari/537.36",
         "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
         "Accept-Language" to "en-US,en;q=0.9",
-        "Referer" to "$mainUrl/"
+        "Referer" to "$mainUrl/",
+        "Upgrade-Insecure-Requests" to "1",
+        "Sec-Fetch-Dest" to "document",
+        "Sec-Fetch-Mode" to "navigate",
+        "Sec-Fetch-Site" to "same-origin"
     )
 
     override val mainPage = mainPageOf(
@@ -99,8 +103,23 @@ class OnlyKdrama : MainAPI() {
         val hasDetailContent =
             document.selectFirst("#single .sheader .data h1") != null
 
+        val hasSiteShell =
+            document.selectFirst(
+                "#contenedor, header#header, .search-page, .head-main-nav, footer.main, #searchform, .module, .no-result, form[action*='advance-search']"
+            ) != null
+
+        val pageTitle = document.title().lowercase()
+
+        val hasChallengeTitle =
+            pageTitle.contains("just a moment") ||
+                pageTitle.contains("attention required") ||
+                pageTitle.contains("verify you are human")
+
         val hasValidPage =
-            hasHomeCards || hasSearchCards || hasDetailContent
+            hasHomeCards ||
+                hasSearchCards ||
+                hasDetailContent ||
+                (response.code == 200 && hasSiteShell && !hasChallengeTitle)
 
         val cfMitigated =
             response.headers["cf-mitigated"]?.contains("challenge", true) == true
@@ -120,16 +139,17 @@ class OnlyKdrama : MainAPI() {
         val isChallenge =
             !hasValidPage && (
                 cfMitigated ||
+                    hasChallengeTitle ||
                     hasCfChallengeToken ||
                     hasVerificationText ||
-                    hasChallengePlatform ||
                     response.code == 403 ||
-                    response.code == 503
+                    response.code == 503 ||
+                    (hasChallengePlatform && response.code != 200)
                 )
 
         Log.d(
             "OnlyKDrama",
-            "Response diagnostics: url=$url, code=${response.code}, htmlLength=${html.length}, validPage=$hasValidPage, cfMitigated=$cfMitigated, isChallenge=$isChallenge"
+            "Response diagnostics: url=$url, code=${response.code}, htmlLength=${html.length}, validPage=$hasValidPage, siteShell=$hasSiteShell, cfMitigated=$cfMitigated, isChallenge=$isChallenge"
         )
 
         if (isChallenge) {
@@ -334,8 +354,11 @@ class OnlyKdrama : MainAPI() {
     override suspend fun search(
         query: String
     ): List<SearchResponse> {
+        val cleanQuery = query.trim()
+        if (cleanQuery.isBlank()) return emptyList()
+
         val encodedQuery = URLEncoder.encode(
-            query.trim(),
+            cleanQuery,
             "UTF-8"
         )
 
