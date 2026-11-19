@@ -11,8 +11,10 @@ import android.net.Uri
 import android.net.http.SslError
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.view.Gravity
 import android.view.KeyEvent
+import android.view.MotionEvent
 import android.view.View
 import android.webkit.CookieManager
 import android.webkit.SslErrorHandler
@@ -36,7 +38,7 @@ object OnlyKdramaWebView {
     private const val TEXT = 0xFFF5F0FA.toInt()
     private const val MUTED = 0xFFA69CAF.toInt()
 
-    private const val CHECK_INTERVAL = 1500L
+    private const val CHECK_INTERVAL = 1200L
 
     private fun extractCookieValue(cookies: String?, name: String): String? {
         return cookies.orEmpty()
@@ -154,6 +156,8 @@ object OnlyKdramaWebView {
         var saved = false
         var checking = false
         var rateLimited = false
+        var turnstileFirstSeenAt = 0L
+        var lastAutoTapAt = 0L
 
         lateinit var dialog: AlertDialog
 
@@ -220,7 +224,7 @@ object OnlyKdramaWebView {
         statusPanel.addView(makeText("Website verification", 15f, TEXT, true))
 
         val status = makeText(
-            "Checking website security automatically...",
+            "Verifying automatically...",
             12f,
             MUTED
         ).apply {
@@ -266,7 +270,6 @@ object OnlyKdramaWebView {
             builtInZoomControls = true
             displayZoomControls = false
 
-            // Strip "; wv" so Cloudflare Turnstile recognizes it as standard Chrome Mobile
             val rawUa = userAgentString.orEmpty()
             val cleanUa = rawUa
                 .replace("; wv)", ")")
@@ -274,6 +277,42 @@ object OnlyKdramaWebView {
             if (cleanUa.isNotBlank()) {
                 userAgentString = cleanUa
             }
+        }
+
+        fun dispatchAutoTap(cssX: Float, cssY: Float) {
+            if (cleaned || saved || webView.width <= 0 || webView.height <= 0) return
+
+            @Suppress("DEPRECATION")
+            val scale = webView.scale.takeIf { it > 0f } ?: density
+            val x = (cssX * scale).coerceIn(1f, (webView.width - 1).toFloat())
+            val y = (cssY * scale).coerceIn(1f, (webView.height - 1).toFloat())
+
+            val downTime = SystemClock.uptimeMillis()
+            val downEvent = MotionEvent.obtain(
+                downTime,
+                downTime,
+                MotionEvent.ACTION_DOWN,
+                x,
+                y,
+                0
+            )
+            webView.dispatchTouchEvent(downEvent)
+            downEvent.recycle()
+
+            handler.postDelayed({
+                if (cleaned || saved) return@postDelayed
+                val upTime = SystemClock.uptimeMillis()
+                val upEvent = MotionEvent.obtain(
+                    downTime,
+                    upTime,
+                    MotionEvent.ACTION_UP,
+                    x,
+                    y,
+                    0
+                )
+                webView.dispatchTouchEvent(upEvent)
+                upEvent.recycle()
+            }, 60L)
         }
 
         fun isExpectedHost(url: String?): Boolean {
@@ -299,12 +338,12 @@ object OnlyKdramaWebView {
             val clearanceValue = extractCookieValue(mergedCookies, "cf_clearance")
 
             if (clearanceValue == null) {
-                status.text = "Waiting for Cloudflare clearance cookie..."
+                status.text = "Waiting for clearance cookie..."
                 return
             }
 
             if (clearStaleClearance && initialClearance != null && clearanceValue == initialClearance) {
-                status.text = "Refreshing Cloudflare clearance..."
+                status.text = "Refreshing clearance cookie..."
                 return
             }
 
@@ -315,13 +354,13 @@ object OnlyKdramaWebView {
             )
 
             if (!result) {
-                status.text = "Session saving failed. Retrying..."
+                status.text = "Saving session..."
                 return
             }
 
             saved = true
 
-            status.text = "Verification complete. Session saved!"
+            status.text = "Verified! Closing automatically..."
             secureBadge.text = "✓ VERIFIED"
             secureBadge.setTextColor(0xFF9BE8B1.toInt())
 
@@ -331,10 +370,10 @@ object OnlyKdramaWebView {
                 if (!cleaned && dialog.isShowing) {
                     dialog.dismiss()
                 }
-            }, 600L)
+            }, 400L)
         }
 
-        // Automatic Cloudflare detection
+        // Automatic Cloudflare detection + Turnstile auto-tap
         val autoCheck = object : Runnable {
             override fun run() {
                 if (cleaned || saved || rateLimited || !dialog.isShowing) {
@@ -370,51 +409,80 @@ object OnlyKdramaWebView {
                             body.includes("you are being rate limited") ||
                             body.includes("has banned you temporarily")
                         ) {
-                            return 2;
+                            return "RATE_LIMITED";
                         }
 
-                        var hasTurnstile = document.querySelector(
-                            "#challenge-stage, #turnstile-wrapper, iframe[src*='challenges.cloudflare.com']"
-                        ) !== null;
+                        var widget = document.querySelector(
+                            "iframe[src*='challenges.cloudflare.com'], #turnstile-wrapper, #challenge-stage, [name^='cf-turnstile']"
+                        );
+
+                        if (widget) {
+                            var r = widget.getBoundingClientRect();
+                            if (r.width > 40 && r.height > 20) {
+                                return "WIDGET:" + (r.left + 28) + ":" + (r.top + r.height / 2);
+                            }
+                            return "CHALLENGE";
+                        }
 
                         var challenge =
-                            hasTurnstile ||
                             html.includes("cf-chl-") ||
                             html.includes("challenge-platform") ||
                             body.includes("just a moment") ||
                             body.includes("checking your browser") ||
                             body.includes("verify you are human");
 
-                        if (challenge) return 0;
+                        if (challenge) return "CHALLENGE";
 
                         var hasSiteDom = document.querySelector(
                             "article.item, #contenedor, .search-page, #single, .module"
                         ) !== null;
 
-                        return (document.readyState === "complete" && hasSiteDom) ? 1 : 0;
+                        return (document.readyState === "complete" && hasSiteDom) ? "VERIFIED" : "CHALLENGE";
                     })();
                     """.trimIndent()
-                ) { result ->
+                ) { rawResult ->
                     checking = false
 
                     if (cleaned || saved) return@evaluateJavascript
 
-                    when (result) {
-                        "2" -> {
+                    val result = rawResult?.trim('"').orEmpty()
+
+                    when {
+                        result == "RATE_LIMITED" -> {
                             rateLimited = true
                             handler.removeCallbacks(this)
                             progress.visibility = View.GONE
-                            status.text = "Cloudflare Error 1015: Temporarily rate-limited. Close and wait before retrying."
+                            status.text = "Cloudflare Error 1015: Temporarily rate-limited. Close and wait."
                             secureBadge.text = "RATE LIMITED"
                             secureBadge.setTextColor(0xFFFF9999.toInt())
                         }
 
-                        "1" -> {
+                        result == "VERIFIED" -> {
                             saveVerifiedSession()
                         }
 
+                        result.startsWith("WIDGET:") -> {
+                            val now = SystemClock.uptimeMillis()
+                            if (turnstileFirstSeenAt == 0L) {
+                                turnstileFirstSeenAt = now
+                            }
+
+                            status.text = "Auto-completing verification..."
+
+                            if (now - turnstileFirstSeenAt >= 1800L && now - lastAutoTapAt >= 3500L) {
+                                val parts = result.split(":")
+                                val cssX = parts.getOrNull(1)?.toFloatOrNull()
+                                val cssY = parts.getOrNull(2)?.toFloatOrNull()
+                                if (cssX != null && cssY != null) {
+                                    lastAutoTapAt = now
+                                    dispatchAutoTap(cssX, cssY)
+                                }
+                            }
+                        }
+
                         else -> {
-                            status.text = "Complete verification if prompted — closes automatically..."
+                            turnstileFirstSeenAt = 0L
+                            status.text = "Verifying security automatically..."
                         }
                     }
 
@@ -449,9 +517,9 @@ object OnlyKdramaWebView {
                 progress.visibility = View.GONE
 
                 if (!saved && !rateLimited) {
-                    status.text = "Checking website security automatically..."
+                    status.text = "Checking security automatically..."
                     handler.removeCallbacks(autoCheck)
-                    handler.postDelayed(autoCheck, 700L)
+                    handler.postDelayed(autoCheck, 500L)
                 }
             }
 
@@ -516,7 +584,7 @@ object OnlyKdramaWebView {
 
         // Footer
         val footer = makeText(
-            "Session saving and closing happen automatically",
+            "Verification, saving, and closing happen automatically",
             10f,
             MUTED
         ).apply {
@@ -576,6 +644,8 @@ object OnlyKdramaWebView {
 
             rateLimited = false
             checking = false
+            turnstileFirstSeenAt = 0L
+            lastAutoTapAt = 0L
             secureBadge.text = "● SECURE"
             secureBadge.setTextColor(0xFFBBA0FF.toInt())
             status.text = "Refreshing website..."
@@ -625,7 +695,7 @@ object OnlyKdramaWebView {
 
             webView.loadUrl(HOME_URL)
 
-            handler.postDelayed(autoCheck, 1500L)
+            handler.postDelayed(autoCheck, 1200L)
         }
     }
 }
