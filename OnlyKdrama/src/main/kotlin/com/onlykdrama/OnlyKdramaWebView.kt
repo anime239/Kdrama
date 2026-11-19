@@ -37,7 +37,7 @@ object OnlyKdramaWebView {
     private const val TEXT = 0xFFF5F0FA.toInt()
     private const val MUTED = 0xFFA69CAF.toInt()
 
-    private const val CHECK_INTERVAL = 800L
+    private const val CHECK_INTERVAL = 700L
 
     private fun extractCookieValue(cookies: String?, name: String): String? {
         return cookies.orEmpty()
@@ -77,6 +77,7 @@ object OnlyKdramaWebView {
 
     fun clearClearanceCookie() {
         val manager = CookieManager.getInstance()
+        val expired = "Expires=Thu, 01 Jan 1970 00:00:00 GMT; Max-Age=0"
         val domains = listOf(
             HOME_URL,
             BASE_DOMAIN_URL,
@@ -84,8 +85,10 @@ object OnlyKdramaWebView {
             "https://www.onlykdrama.shop/"
         )
         for (domain in domains) {
-            manager.setCookie(domain, "cf_clearance=; Max-Age=0; path=/")
-            manager.setCookie(domain, "cf_clearance=; Max-Age=0; domain=.onlykdrama.shop; path=/")
+            manager.setCookie(domain, "cf_clearance=; $expired; path=/")
+            manager.setCookie(domain, "cf_clearance=; $expired; domain=.onlykdrama.shop; path=/")
+            manager.setCookie(domain, "cf_clearance=; $expired; path=/; Secure; SameSite=None")
+            manager.setCookie(domain, "cf_clearance=; $expired; domain=.onlykdrama.shop; path=/; Secure; SameSite=None")
         }
         manager.flush()
     }
@@ -95,6 +98,7 @@ object OnlyKdramaWebView {
         onDone: (() -> Unit)? = null
     ) {
         val manager = CookieManager.getInstance()
+        val expired = "Expires=Thu, 01 Jan 1970 00:00:00 GMT; Max-Age=0"
         val cookies = mergeCookies(
             manager.getCookie(HOME_URL),
             manager.getCookie(BASE_DOMAIN_URL)
@@ -105,9 +109,9 @@ object OnlyKdramaWebView {
             .filter { it.isNotBlank() }
             .distinct()
             .forEach { name ->
-                manager.setCookie(HOME_URL, "$name=; Max-Age=0; path=/")
-                manager.setCookie(BASE_DOMAIN_URL, "$name=; Max-Age=0; path=/")
-                manager.setCookie(HOME_URL, "$name=; Max-Age=0; domain=.onlykdrama.shop; path=/")
+                manager.setCookie(HOME_URL, "$name=; $expired; path=/")
+                manager.setCookie(BASE_DOMAIN_URL, "$name=; $expired; path=/")
+                manager.setCookie(HOME_URL, "$name=; $expired; domain=.onlykdrama.shop; path=/")
             }
 
         manager.flush()
@@ -253,7 +257,7 @@ object OnlyKdramaWebView {
             progressTintList = ColorStateList.valueOf(PURPLE)
         }
 
-        // WebView
+        // WebView (keep native User-Agent intact so Client Hints match Turnstile)
         val webView = WebView(context).apply {
             setBackgroundColor(Color.BLACK)
             overScrollMode = View.OVER_SCROLL_NEVER
@@ -278,14 +282,6 @@ object OnlyKdramaWebView {
             allowContentAccess = true
             builtInZoomControls = true
             displayZoomControls = false
-
-            val rawUa = userAgentString.orEmpty()
-            val cleanUa = rawUa
-                .replace("; wv)", ")")
-                .replace("; wv;", ";")
-            if (cleanUa.isNotBlank()) {
-                userAgentString = cleanUa
-            }
         }
 
         fun isExpectedHost(url: String?): Boolean {
@@ -338,7 +334,7 @@ object OnlyKdramaWebView {
                 if (!cleaned && dialog.isShowing) {
                     dialog.dismiss()
                 }
-            }, 350L)
+            }, 300L)
 
             return true
         }
@@ -347,11 +343,6 @@ object OnlyKdramaWebView {
         val autoCheck = object : Runnable {
             override fun run() {
                 if (cleaned || saved || rateLimited || !dialog.isShowing) {
-                    return
-                }
-
-                // If cf_clearance already arrived after a user tap, save and close immediately
-                if (trySaveVerifiedSession()) {
                     return
                 }
 
@@ -473,10 +464,8 @@ object OnlyKdramaWebView {
                 progress.visibility = View.GONE
 
                 if (!saved && !rateLimited) {
-                    if (!trySaveVerifiedSession()) {
-                        handler.removeCallbacks(autoCheck)
-                        handler.postDelayed(autoCheck, 400L)
-                    }
+                    handler.removeCallbacks(autoCheck)
+                    handler.postDelayed(autoCheck, 300L)
                 }
             }
 
@@ -650,7 +639,7 @@ object OnlyKdramaWebView {
 
             webView.loadUrl(HOME_URL)
 
-            handler.postDelayed(autoCheck, 800L)
+            handler.postDelayed(autoCheck, 700L)
         }
     }
 }
