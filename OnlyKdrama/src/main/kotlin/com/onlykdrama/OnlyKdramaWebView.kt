@@ -256,7 +256,6 @@ object OnlyKdramaWebView {
         clearStaleClearance: Boolean = false,
         onClosed: ((verified: Boolean) -> Unit)? = null
     ) {
-        // Prevent stacked duplicate verification dialogs
         activeDialog?.get()?.let { existing ->
             if (existing.isShowing) {
                 runCatching { existing.dismiss() }
@@ -287,8 +286,8 @@ object OnlyKdramaWebView {
         ).coerceAtLeast(dp(420))
 
         val webViewHeight = (
-            windowHeight - dp(215)
-        ).coerceAtLeast(dp(180))
+            windowHeight - dp(190)
+        ).coerceAtLeast(dp(200))
 
         val cookieManager = CookieManager.getInstance()
         cookieManager.setAcceptCookie(true)
@@ -348,6 +347,7 @@ object OnlyKdramaWebView {
             0xFFFFE8EF.toInt()
         ).apply {
             setPadding(0, dp(2), dp(8), 0)
+            maxLines = 2
         }
 
         titleArea.addView(status)
@@ -495,7 +495,6 @@ object OnlyKdramaWebView {
             }, 300L)
         }
 
-        // Native-only check (no JS injection so Turnstile isn't disturbed)
         fun tryAutoSave(): Boolean {
             if (saved) return true
             if (cleaned || !dialog.isShowing) return false
@@ -529,7 +528,6 @@ object OnlyKdramaWebView {
             }
         }
 
-        // Manual fallback save button
         fun saveSessionManually() {
             if (saved || cleaned) return
 
@@ -621,7 +619,7 @@ object OnlyKdramaWebView {
         }
 
         // Floating Dark Espresso Pill Dock (Single Compact Row)
-        fun makeCircleIconBtn(symbol: String): Button = Button(ctx).apply {
+        fun makeCircleIconBtn(symbol: String): Button = Button(context).apply {
             text = symbol
             isAllCaps = false
             textSize = 15f
@@ -641,12 +639,14 @@ object OnlyKdramaWebView {
         val refresh = makeCircleIconBtn("↻")
         val close = makeCircleIconBtn("✕")
 
-        val saveButton = Button(ctx).apply {
+        val saveButton = Button(context).apply {
             text = "Save & Close ♡"
             isAllCaps = false
-            textSize = 12.5f
+            maxLines = 1
+            textSize = 12f
             typeface = Typeface.DEFAULT_BOLD
             setTextColor(CREAM_CANVAS)
+            setPadding(dp(12), 0, dp(12), 0)
             minHeight = dp(44)
             minimumHeight = dp(44)
             background = roundedBackground(ROSE_BANNER, dpF(22f))
@@ -654,7 +654,7 @@ object OnlyKdramaWebView {
             elevation = 0f
         }
 
-        val floatingDock = LinearLayout(ctx).apply {
+        val floatingDock = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(8), dp(8), dp(8), dp(8))
@@ -688,7 +688,7 @@ object OnlyKdramaWebView {
         )
 
         // Main Creamy Card Shell
-        val content = LinearLayout(ctx).apply {
+        val content = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
             setPadding(dp(12), dp(12), dp(12), dp(12))
@@ -726,7 +726,7 @@ object OnlyKdramaWebView {
         }
 
         // Dialog
-        dialog = AlertDialog.Builder(ctx)
+        dialog = AlertDialog.Builder(context)
             .setView(content)
             .create()
 
