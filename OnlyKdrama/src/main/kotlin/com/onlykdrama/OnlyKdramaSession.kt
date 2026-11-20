@@ -12,6 +12,7 @@ object OnlyKdramaSession {
     private const val PREFS = "onlykdrama_session"
     private const val COOKIE_KEY = "cookies"
     private const val UA_KEY = "user_agent"
+    private const val VERIFIED_AT_KEY = "verified_at"
     private const val SITE_URL = "https://onlykdrama.shop/"
 
     @Volatile
@@ -63,31 +64,30 @@ object OnlyKdramaSession {
 
         val existingMap = parseCookieMap(existingCookies)
         val webMap = parseCookieMap(webCookies)
+        if (webMap.isEmpty()) return existingCookies
 
-        val webClearance = webMap.entries
-            .firstOrNull { it.key.equals("cf_clearance", true) }
-            ?.value
+        var changed = false
+        for ((k, v) in webMap) {
+            if (existingMap[k] != v) {
+                existingMap[k] = v
+                changed = true
+            }
+        }
 
-        if (webClearance.isNullOrBlank()) return existingCookies
-
-        val existingClearance = existingMap.entries
-            .firstOrNull { it.key.equals("cf_clearance", true) }
-            ?.value
-
-        if (existingClearance == webClearance && existingMap.isNotEmpty()) {
+        if (!changed && existingMap.isNotEmpty()) {
             return existingCookies
         }
 
-        existingMap.putAll(webMap)
         val merged = existingMap.entries.joinToString("; ") { "${it.key}=${it.value}" }
 
         synchronized(this) {
             prefs.edit()
                 .putString(COOKIE_KEY, merged)
+                .putLong(VERIFIED_AT_KEY, System.currentTimeMillis())
                 .commit()
         }
 
-        Log.d(TAG, "Synced fresh cookies from WebView: ${existingMap.keys}")
+        Log.d(TAG, "Synced cookies from WebView: ${existingMap.keys}")
         return merged
     }
 
@@ -99,14 +99,19 @@ object OnlyKdramaSession {
         initialize(context)
 
         val cleanedMap = parseCookieMap(cookies)
-        if (cleanedMap.isEmpty()) return false
-
         val formatted = cleanedMap.entries.joinToString("; ") { "${it.key}=${it.value}" }
         val names = cleanedMap.keys.toList()
 
+        // Allow saving even when site loads without setting cookies (stores active UA + timestamp)
+        if (formatted.isBlank() && userAgent.isNullOrBlank()) return false
+
         val saved = synchronized(this) {
             val editor = preferences(context).edit()
-                .putString(COOKIE_KEY, formatted)
+                .putLong(VERIFIED_AT_KEY, System.currentTimeMillis())
+
+            if (formatted.isNotBlank()) {
+                editor.putString(COOKIE_KEY, formatted)
+            }
 
             if (!userAgent.isNullOrBlank()) {
                 editor.putString(UA_KEY, userAgent)
@@ -125,6 +130,20 @@ object OnlyKdramaSession {
         )
 
         return saved
+    }
+
+    fun recordBackendSuccess(userAgent: String?) {
+        val context = appContext ?: return
+        synchronized(this) {
+            val prefs = preferences(context)
+            val editor = prefs.edit()
+                .putLong(VERIFIED_AT_KEY, System.currentTimeMillis())
+
+            if (prefs.getString(UA_KEY, null).isNullOrBlank() && !userAgent.isNullOrBlank()) {
+                editor.putString(UA_KEY, userAgent)
+            }
+            editor.commit()
+        }
     }
 
     fun mergeCookies(newCookies: Map<String, String>) {
@@ -146,18 +165,24 @@ object OnlyKdramaSession {
                 }
             }
 
+            val editor = prefs.edit()
+                .putLong(VERIFIED_AT_KEY, System.currentTimeMillis())
+
             if (changed) {
                 val merged = existing.entries.joinToString("; ") { "${it.key}=${it.value}" }
-                prefs.edit()
-                    .putString(COOKIE_KEY, merged)
-                    .commit()
+                editor.putString(COOKIE_KEY, merged)
                 Log.d(TAG, "Merged response cookies: ${existing.keys}")
             }
+
+            editor.commit()
         }
     }
 
     fun hasSavedSession(context: Context): Boolean {
-        return hasCloudflareClearance(context)
+        val prefs = preferences(context)
+        val hasCookies = parseCookieMap(prefs.getString(COOKIE_KEY, null)).isNotEmpty()
+        val hasActiveSession = prefs.getLong(VERIFIED_AT_KEY, 0L) > 0L
+        return hasCookies || hasActiveSession
     }
 
     fun hasCloudflareClearance(context: Context): Boolean {
@@ -199,7 +224,6 @@ object OnlyKdramaSession {
         val normalized = linkedMapOf<String, String>()
         for ((key, value) in original) {
             val lowerKey = key.lowercase()
-            // Cookies and Referer are passed via NiceHttp's dedicated parameters
             if (lowerKey == "cookie" || lowerKey == "referer") continue
             normalized[lowerKey] = value
         }
@@ -224,6 +248,7 @@ object OnlyKdramaSession {
             preferences(context).edit()
                 .remove(COOKIE_KEY)
                 .remove(UA_KEY)
+                .remove(VERIFIED_AT_KEY)
                 .commit()
         }
 
