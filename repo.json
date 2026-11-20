@@ -1,8 +1,9 @@
 {
   "name": "Kdrama",
-  "description": "Kdrama CloudStream Extensions",
+  "description": "Cozy K-drama & romcom comfort 💕",
   "manifestVersion": 1,
   "pluginLists": [
     "https://raw.githubusercontent.com/anime239/Kdrama/builds/plugins.json"
-  ]
+  ],
+  "iconUrl": "https://raw.githubusercontent.com/anime239/Kdrama/main/icons/kdrama.jpg"
 }
