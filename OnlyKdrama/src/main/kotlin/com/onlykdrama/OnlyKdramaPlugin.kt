@@ -2,8 +2,14 @@ package com.onlykdrama
 
 import android.app.AlertDialog
 import android.content.Context
-import android.graphics.Color
+import android.graphics.Canvas
+import android.graphics.ColorFilter
+import android.graphics.Paint
+import android.graphics.Path
+import android.graphics.PixelFormat
+import android.graphics.RectF
 import android.graphics.Typeface
+import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.view.Gravity
 import android.widget.Button
@@ -33,320 +39,460 @@ class OnlyKdramaPlugin : Plugin() {
             fun dp(value: Int): Int =
                 (value * density).toInt()
 
-            val backgroundColor = 0xFF09090F.toInt()
-            val panelColor = 0xFF171421.toInt()
-            val purple = 0xFF9B55E8.toInt()
-            val textColor = 0xFFF5F0FA.toInt()
-            val mutedColor = 0xFFA69CAF.toInt()
-            val green = 0xFF8ED6A5.toInt()
+            fun dpF(value: Float): Float =
+                value * density
+
+            // Creamy Strawberry Rom-Com Palette
+            val creamCanvas = 0xFFFFF7F9.toInt()
+            val creamBorder = 0xFFFFD1DF.toInt()
+            val roseBanner = 0xFFFF7597.toInt()
+            val blushTile = 0xFFFFE3EC.toInt()
+            val blushStroke = 0xFFFFC2D6.toInt()
+            val lavenderTile = 0xFFF4E4FF.toInt()
+            val lavenderStroke = 0xFFE2C6FF.toInt()
+            val espressoInk = 0xFF1E0F16.toInt()
+            val mutedPlum = 0xFF7A5666.toInt()
+            val darkDock = 0xFF1A0E14.toInt()
+            val darkPillSecondary = 0xFF331B26.toInt()
+            val softRoseText = 0xFFFFB3C6.toInt()
 
             fun rounded(
                 color: Int,
-                radius: Int,
-                stroke: Int? = null
+                radiusDp: Int,
+                strokeColor: Int? = null,
+                strokeWidthDp: Float = 1.2f
             ) = GradientDrawable().apply {
                 setColor(color)
-                cornerRadius = dp(radius).toFloat()
-                stroke?.let { setStroke(dp(1), it) }
+                cornerRadius = dpF(radiusDp.toFloat())
+                strokeColor?.let {
+                    setStroke(dpF(strokeWidthDp).toInt().coerceAtLeast(1), it)
+                }
             }
 
-            fun text(
+            fun loveBannerDrawable(radiusDp: Int): Drawable = object : Drawable() {
+                private val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = roseBanner
+                    style = Paint.Style.FILL
+                }
+                private val softCirclePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = 0x26FFFFFF
+                    style = Paint.Style.FILL
+                }
+                private val blushCirclePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = 0x38FFE3EC
+                    style = Paint.Style.FILL
+                }
+                private val artPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = 0x55FFF7F9
+                    style = Paint.Style.FILL
+                }
+                private val clipPath = Path()
+                private val rect = RectF()
+
+                private fun drawHeart(canvas: Canvas, cx: Float, cy: Float, size: Float) {
+                    val path = Path()
+                    val topCurve = size * 0.3f
+                    path.moveTo(cx, cy + topCurve)
+                    path.cubicTo(cx, cy, cx - size / 2f, cy, cx - size / 2f, cy + topCurve)
+                    path.cubicTo(
+                        cx - size / 2f,
+                        cy + (size + topCurve) / 2f,
+                        cx,
+                        cy + (size + topCurve) / 1.4f,
+                        cx,
+                        cy + size
+                    )
+                    path.cubicTo(
+                        cx,
+                        cy + (size + topCurve) / 1.4f,
+                        cx + size / 2f,
+                        cy + (size + topCurve) / 2f,
+                        cx + size / 2f,
+                        cy + topCurve
+                    )
+                    path.cubicTo(cx + size / 2f, cy, cx, cy, cx, cy + topCurve)
+                    path.close()
+                    canvas.drawPath(path, artPaint)
+                }
+
+                private fun drawSparkle(canvas: Canvas, cx: Float, cy: Float, r: Float) {
+                    val path = Path().apply {
+                        moveTo(cx, cy - r)
+                        quadTo(cx, cy, cx + r, cy)
+                        quadTo(cx, cy, cx, cy + r)
+                        quadTo(cx, cy, cx - r, cy)
+                        quadTo(cx, cy, cx, cy - r)
+                        close()
+                    }
+                    canvas.drawPath(path, artPaint)
+                }
+
+                override fun draw(canvas: Canvas) {
+                    val w = bounds.width().toFloat()
+                    val h = bounds.height().toFloat()
+                    if (w <= 0f || h <= 0f) return
+
+                    rect.set(0f, 0f, w, h)
+                    val radius = dpF(radiusDp.toFloat())
+
+                    canvas.save()
+                    clipPath.reset()
+                    clipPath.addRoundRect(rect, radius, radius, Path.Direction.CW)
+                    canvas.clipPath(clipPath)
+
+                    canvas.drawRect(rect, bgPaint)
+
+                    // Decorative pastel circles
+                    canvas.drawCircle(w * 0.88f, h * 0.18f, h * 0.52f, softCirclePaint)
+                    canvas.drawCircle(w * 0.72f, h * 0.92f, h * 0.38f, blushCirclePaint)
+                    canvas.drawCircle(w * 0.12f, h * 0.95f, h * 0.28f, softCirclePaint)
+
+                    // Cute hearts & sparkles
+                    drawHeart(canvas, w * 0.63f, h * 0.22f, dpF(14f))
+                    drawHeart(canvas, w * 0.91f, h * 0.62f, dpF(10f))
+                    drawSparkle(canvas, w * 0.54f, h * 0.68f, dpF(8f))
+                    drawSparkle(canvas, w * 0.76f, h * 0.30f, dpF(6f))
+
+                    canvas.restore()
+                }
+
+                override fun setAlpha(alpha: Int) {
+                    bgPaint.alpha = alpha
+                }
+
+                override fun setColorFilter(colorFilter: ColorFilter?) {
+                    bgPaint.colorFilter = colorFilter
+                }
+
+                @Deprecated("Deprecated in Java")
+                override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
+            }
+
+            fun makeText(
                 value: String,
                 size: Float,
                 color: Int,
                 bold: Boolean = false
             ) = TextView(ctx).apply {
-                this.text = value
+                text = value
                 textSize = size
                 setTextColor(color)
-
                 if (bold) {
-                    setTypeface(null, Typeface.BOLD)
+                    typeface = Typeface.DEFAULT_BOLD
                 }
             }
 
-            val saved =
-                OnlyKdramaSession.hasCloudflareClearance(ctx)
+            val saved = OnlyKdramaSession.hasCloudflareClearance(ctx)
+            val clearance = OnlyKdramaWebView.hasSiteCookies()
 
-            val clearance =
-                OnlyKdramaWebView.hasSiteCookies()
-
+            // Outer Creamy Card Shell
             val root = LinearLayout(ctx).apply {
                 orientation = LinearLayout.VERTICAL
-                setPadding(
-                    dp(18),
-                    dp(18),
-                    dp(18),
-                    dp(15)
-                )
+                setPadding(dp(16), dp(16), dp(16), dp(16))
                 background = rounded(
-                    backgroundColor,
-                    20,
-                    0xFF332744.toInt()
+                    color = creamCanvas,
+                    radiusDp = 28,
+                    strokeColor = creamBorder,
+                    strokeWidthDp = 1.5f
                 )
             }
 
-            // Header
+            // Top Love-Art Banner Card (inspired by reference top pink card)
+            val heroBanner = LinearLayout(ctx).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(dp(18), dp(16), dp(18), dp(16))
+                background = loveBannerDrawable(22)
+            }
 
-            val header = LinearLayout(ctx).apply {
+            val bannerTopRow = LinearLayout(ctx).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
             }
 
-            val logo = TextView(ctx).apply {
-                text = "K"
-                textSize = 23f
-                typeface = Typeface.DEFAULT_BOLD
-                gravity = Gravity.CENTER
-                setTextColor(Color.WHITE)
-                background = rounded(purple, 13)
-            }
-
-            header.addView(
-                logo,
-                LinearLayout.LayoutParams(
-                    dp(48),
-                    dp(48)
-                )
-            )
-
-            val titleArea = LinearLayout(ctx).apply {
+            val titleCol = LinearLayout(ctx).apply {
                 orientation = LinearLayout.VERTICAL
-                setPadding(dp(12), 0, 0, 0)
             }
 
-            titleArea.addView(
-                text(
-                    "OnlyKDrama",
-                    19f,
-                    textColor,
-                    true
+            titleCol.addView(
+                makeText(
+                    "OnlyKDrama ♡",
+                    20f,
+                    creamCanvas,
+                    bold = true
                 )
             )
 
-            titleArea.addView(
-                text(
-                    "SESSION SETTINGS",
+            titleCol.addView(
+                makeText(
+                    "ROM-COM SESSION PASS",
                     10f,
-                    mutedColor,
-                    true
-                )
+                    0xFFFFE6EE.toInt(),
+                    bold = true
+                ).apply {
+                    setPadding(0, dp(2), 0, 0)
+                }
             )
 
-            header.addView(
-                titleArea,
+            bannerTopRow.addView(
+                titleCol,
                 LinearLayout.LayoutParams(0, -2, 1f)
             )
 
-            val badge = TextView(ctx).apply {
-                text = "● ACTIVE"
-                textSize = 10f
-                setTextColor(green)
-                setPadding(
-                    dp(10),
-                    dp(8),
-                    dp(10),
-                    dp(8)
-                )
-                background = rounded(
-                    0xFF192D22.toInt(),
-                    25
-                )
+            val emblem = TextView(ctx).apply {
+                text = "K♡"
+                textSize = 15f
+                typeface = Typeface.DEFAULT_BOLD
+                gravity = Gravity.CENTER
+                setTextColor(roseBanner)
+                background = rounded(creamCanvas, 22)
             }
 
-            header.addView(badge)
-            root.addView(header)
+            bannerTopRow.addView(
+                emblem,
+                LinearLayout.LayoutParams(dp(44), dp(44))
+            )
 
-            // Status panel
+            heroBanner.addView(bannerTopRow)
 
-            val statusPanel = LinearLayout(ctx).apply {
-                orientation = LinearLayout.VERTICAL
-                setPadding(
-                    dp(15),
-                    dp(14),
-                    dp(15),
-                    dp(14)
-                )
-                background = rounded(
-                    panelColor,
-                    15,
-                    0xFF30243F.toInt()
-                )
+            // Embedded dark pill button inside banner (like "Request Demo" in reference)
+            val bannerActionRow = LinearLayout(ctx).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(0, dp(14), 0, 0)
             }
 
-            statusPanel.addView(
-                text(
-                    "Session status",
-                    15f,
-                    textColor,
-                    true
-                )
-            )
-
-            fun addStatus(
-                label: String,
-                available: Boolean
-            ) {
-                val row = LinearLayout(ctx).apply {
-                    orientation = LinearLayout.HORIZONTAL
-                    gravity = Gravity.CENTER_VERTICAL
-                    setPadding(0, dp(13), 0, 0)
-                }
-
-                val dot = TextView(ctx).apply {
-                    text = "●"
-                    textSize = 12f
-                    setTextColor(
-                        if (available) green
-                        else 0xFFE58B8B.toInt()
-                    )
-                }
-
-                row.addView(
-                    dot,
-                    LinearLayout.LayoutParams(
-                        dp(24),
-                        -2
-                    )
-                )
-
-                row.addView(
-                    text(
-                        label,
-                        13f,
-                        textColor
-                    ),
-                    LinearLayout.LayoutParams(0, -2, 1f)
-                )
-
-                row.addView(
-                    text(
-                        if (available) "Available" else "Not available",
-                        12f,
-                        if (available) green else mutedColor,
-                        true
-                    )
-                )
-
-                statusPanel.addView(row)
-            }
-
-            addStatus(
-                "Saved HTTP session",
-                saved
-            )
-
-            addStatus(
-                "Cloudflare browser cookies",
-                clearance
-            )
-
-            val info = text(
-                "Verification and session saving happen automatically when required.",
-                12f,
-                mutedColor
-            ).apply {
-                setPadding(0, dp(13), 0, 0)
-            }
-
-            statusPanel.addView(info)
-
-            root.addView(
-                statusPanel,
-                LinearLayout.LayoutParams(
-                    -1,
-                    -2
-                ).apply {
-                    topMargin = dp(20)
-                }
-            )
-
-            // Actions
-
-            fun makeButton(
-                label: String,
-                color: Int,
-                foreground: Int
-            ) = Button(ctx).apply {
-                text = label
+            val openButton = Button(ctx).apply {
+                text = "Open Website  ↗"
                 isAllCaps = false
                 textSize = 12f
                 typeface = Typeface.DEFAULT_BOLD
-                setTextColor(foreground)
-                minHeight = dp(48)
-                minimumHeight = dp(48)
-                background = rounded(color, 11)
+                setTextColor(creamCanvas)
+                minHeight = dp(38)
+                minimumHeight = dp(38)
+                setPadding(dp(16), 0, dp(16), 0)
+                background = rounded(espressoInk, 20)
                 stateListAnimator = null
                 elevation = 0f
             }
 
-            val openButton = makeButton(
-                "Open Website",
-                purple,
-                Color.WHITE
+            bannerActionRow.addView(
+                openButton,
+                LinearLayout.LayoutParams(-2, dp(38))
             )
 
-            val clearButton = makeButton(
-                "Clear Session",
-                0xFF29202F.toInt(),
-                0xFFFFA0A0.toInt()
-            )
-
-            val closeButton = makeButton(
-                "Close",
-                0xFF211B2B.toInt(),
-                textColor
-            )
-
-            val actions = LinearLayout(ctx).apply {
-                orientation = LinearLayout.VERTICAL
+            val activeTag = TextView(ctx).apply {
+                text = if (saved && clearance) "● READY" else "● STANDBY"
+                textSize = 10f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(creamCanvas)
+                setPadding(dp(12), dp(6), dp(12), dp(6))
+                background = rounded(0x331E0F16, 16)
             }
 
-            actions.addView(
-                openButton,
-                LinearLayout.LayoutParams(-1, dp(49)).apply {
-                    topMargin = dp(18)
-                }
+            bannerActionRow.addView(
+                LinearLayout(ctx),
+                LinearLayout.LayoutParams(0, 1, 1f)
             )
 
-            val secondary = LinearLayout(ctx).apply {
+            bannerActionRow.addView(activeTag)
+
+            heroBanner.addView(bannerActionRow)
+
+            root.addView(
+                heroBanner,
+                LinearLayout.LayoutParams(-1, -2)
+            )
+
+            // Section Title
+            val sectionHeader = makeText(
+                "Session status",
+                15f,
+                espressoInk,
+                bold = true
+            ).apply {
+                setPadding(dp(4), dp(16), dp(4), dp(10))
+            }
+            root.addView(sectionHeader)
+
+            // 2-Column Pastel Bento Status Grid
+            fun buildBentoTile(
+                iconSymbol: String,
+                iconBg: Int,
+                iconColor: Int,
+                label: String,
+                available: Boolean,
+                tileBg: Int,
+                tileBorder: Int
+            ): LinearLayout {
+                return LinearLayout(ctx).apply {
+                    orientation = LinearLayout.VERTICAL
+                    setPadding(dp(14), dp(14), dp(14), dp(14))
+                    background = rounded(tileBg, 20, tileBorder, 1.2f)
+
+                    val topRow = LinearLayout(ctx).apply {
+                        orientation = LinearLayout.HORIZONTAL
+                        gravity = Gravity.CENTER_VERTICAL
+                    }
+
+                    val iconBadge = TextView(ctx).apply {
+                        text = iconSymbol
+                        textSize = 14f
+                        typeface = Typeface.DEFAULT_BOLD
+                        gravity = Gravity.CENTER
+                        setTextColor(iconColor)
+                        background = rounded(iconBg, 17)
+                    }
+
+                    topRow.addView(
+                        iconBadge,
+                        LinearLayout.LayoutParams(dp(34), dp(34))
+                    )
+
+                    val dot = TextView(ctx).apply {
+                        text = "●"
+                        textSize = 11f
+                        gravity = Gravity.END
+                        setTextColor(
+                            if (available) 0xFFE63973.toInt()
+                            else 0xFFB89AA7.toInt()
+                        )
+                    }
+
+                    topRow.addView(
+                        dot,
+                        LinearLayout.LayoutParams(0, -2, 1f)
+                    )
+
+                    addView(topRow)
+
+                    addView(
+                        makeText(
+                            if (available) "Ready" else "Empty",
+                            18f,
+                            espressoInk,
+                            bold = true
+                        ).apply {
+                            setPadding(0, dp(10), 0, dp(2))
+                        }
+                    )
+
+                    addView(
+                        makeText(
+                            label,
+                            11f,
+                            mutedPlum,
+                            bold = true
+                        )
+                    )
+                }
+            }
+
+            val bentoRow = LinearLayout(ctx).apply {
                 orientation = LinearLayout.HORIZONTAL
             }
 
-            secondary.addView(
-                clearButton,
-                LinearLayout.LayoutParams(0, dp(47), 1f).apply {
-                    marginEnd = dp(5)
+            val httpTile = buildBentoTile(
+                iconSymbol = "♥",
+                iconBg = roseBanner,
+                iconColor = creamCanvas,
+                label = "HTTP Session",
+                available = saved,
+                tileBg = blushTile,
+                tileBorder = blushStroke
+            )
+
+            val cookieTile = buildBentoTile(
+                iconSymbol = "✦",
+                iconBg = 0xFFB983FF.toInt(),
+                iconColor = creamCanvas,
+                label = "Browser Cookies",
+                available = clearance,
+                tileBg = lavenderTile,
+                tileBorder = lavenderStroke
+            )
+
+            bentoRow.addView(
+                httpTile,
+                LinearLayout.LayoutParams(0, -2, 1f).apply {
+                    marginEnd = dp(6)
                 }
             )
 
-            secondary.addView(
-                closeButton,
-                LinearLayout.LayoutParams(0, dp(47), 1f).apply {
-                    marginStart = dp(5)
+            bentoRow.addView(
+                cookieTile,
+                LinearLayout.LayoutParams(0, -2, 1f).apply {
+                    marginStart = dp(6)
                 }
             )
 
-            actions.addView(
-                secondary,
-                LinearLayout.LayoutParams(-1, dp(47)).apply {
-                    topMargin = dp(9)
-                }
+            root.addView(
+                bentoRow,
+                LinearLayout.LayoutParams(-1, -2)
             )
 
-            root.addView(actions)
-
-            val footer = text(
-                "ONLYKDRAMA  •  AUTOMATIC SESSION MANAGEMENT",
-                9f,
-                mutedColor,
-                true
+            // Cute helper note
+            val noteText = makeText(
+                "Verification & session saving run automatically when needed ♡",
+                11f,
+                mutedPlum
             ).apply {
                 gravity = Gravity.CENTER
-                setPadding(0, dp(17), 0, 0)
+                setPadding(dp(6), dp(12), dp(6), dp(14))
+            }
+            root.addView(noteText)
+
+            // Floating Dark Espresso Pill Dock (matching bottom bar in reference)
+            val floatingDock = LinearLayout(ctx).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(dp(8), dp(8), dp(8), dp(8))
+                background = rounded(darkDock, 28)
             }
 
-            root.addView(footer)
+            val clearButton = Button(ctx).apply {
+                text = "Clear Session"
+                isAllCaps = false
+                textSize = 12f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(softRoseText)
+                minHeight = dp(42)
+                minimumHeight = dp(42)
+                background = rounded(darkPillSecondary, 21)
+                stateListAnimator = null
+                elevation = 0f
+            }
+
+            val closeButton = Button(ctx).apply {
+                text = "✕  Close"
+                isAllCaps = false
+                textSize = 12f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(espressoInk)
+                minHeight = dp(42)
+                minimumHeight = dp(42)
+                background = rounded(creamCanvas, 21)
+                stateListAnimator = null
+                elevation = 0f
+            }
+
+            floatingDock.addView(
+                clearButton,
+                LinearLayout.LayoutParams(0, dp(42), 1f).apply {
+                    marginEnd = dp(6)
+                }
+            )
+
+            floatingDock.addView(
+                closeButton,
+                LinearLayout.LayoutParams(0, dp(42), 1f).apply {
+                    marginStart = dp(6)
+                }
+            )
+
+            root.addView(
+                floatingDock,
+                LinearLayout.LayoutParams(-1, -2)
+            )
 
             val dialog = AlertDialog.Builder(ctx)
                 .setView(root)
@@ -375,7 +521,7 @@ class OnlyKdramaPlugin : Plugin() {
                 OnlyKdramaWebView.clearSiteCookies(ctx) {
                     Toast.makeText(
                         ctx,
-                        "OnlyKDrama session cleared",
+                        "OnlyKDrama session cleared ♡",
                         Toast.LENGTH_SHORT
                     ).show()
 
@@ -389,18 +535,13 @@ class OnlyKdramaPlugin : Plugin() {
 
             dialog.show()
 
-            val screenWidth =
-                ctx.resources.displayMetrics.widthPixels
+            val screenWidth = ctx.resources.displayMetrics.widthPixels
 
             dialog.window?.apply {
-                setBackgroundDrawableResource(
-                    android.R.color.transparent
-                )
-
+                setBackgroundDrawableResource(android.R.color.transparent)
                 setGravity(Gravity.CENTER)
-
                 setLayout(
-                    minOf(dp(440), screenWidth - dp(32)),
+                    minOf(dp(430), screenWidth - dp(32)),
                     -2
                 )
             }
