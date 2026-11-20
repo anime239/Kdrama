@@ -30,14 +30,12 @@ class OnlyKdrama : MainAPI() {
         TvType.Movie
     )
 
-    // Lowercase keys so NiceHttp replaces its default headers cleanly without duplicates
     private val headers = mapOf(
         "user-agent" to "Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Mobile Safari/537.36",
         "accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
         "accept-language" to "en-US,en;q=0.9"
     )
 
-    // Prevent Home reload from slamming Cloudflare with 14 simultaneous requests
     private val requestSemaphore = Semaphore(2)
 
     override val mainPage = mainPageOf(
@@ -178,6 +176,8 @@ class OnlyKdrama : MainAPI() {
 
         if (response.cookies.isNotEmpty()) {
             OnlyKdramaSession.mergeCookies(response.cookies)
+        } else {
+            OnlyKdramaSession.recordBackendSuccess(requestHeaders["user-agent"])
         }
 
         return document
