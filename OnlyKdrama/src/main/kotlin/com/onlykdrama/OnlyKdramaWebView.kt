@@ -25,6 +25,8 @@ import android.view.View
 import android.view.ViewOutlineProvider
 import android.view.WindowManager
 import android.webkit.CookieManager
+import android.webkit.JsPromptResult
+import android.webkit.JsResult
 import android.webkit.SslErrorHandler
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
@@ -91,7 +93,8 @@ object OnlyKdramaWebView {
             manager.getCookie(HOME_URL),
             manager.getCookie(BASE_DOMAIN_URL)
         )
-        return extractCookieValue(cookies, "cf_clearance") != null
+        if (cookies.isNotBlank()) return true
+        return OnlyKdramaSession.savedCookieNamesForLog().isNotEmpty()
     }
 
     private fun clearClearanceCookie(
@@ -304,7 +307,7 @@ object OnlyKdramaWebView {
 
         var cleaned = false
         var saved = false
-        var warnedNoClearance = false
+        var pageLoadedOnce = false
 
         lateinit var dialog: AlertDialog
 
@@ -420,7 +423,7 @@ object OnlyKdramaWebView {
             blockNetworkImage = false
             useWideViewPort = true
             loadWithOverviewMode = true
-            javaScriptCanOpenWindowsAutomatically = true
+            javaScriptCanOpenWindowsAutomatically = false
             setSupportMultipleWindows(false)
 
             mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
@@ -504,19 +507,30 @@ object OnlyKdramaWebView {
 
             cookieManager.flush()
             val cookies = getAllSiteCookies(currentUrl)
-            val clearance = extractCookieValue(cookies, "cf_clearance") ?: return false
-
-            if (clearStaleClearance && initialClearance != null && clearance == initialClearance) {
-                return false
-            }
+            val clearance = extractCookieValue(cookies, "cf_clearance")
 
             if (isChallengeTitle(webView.title)) {
-                status.text = "Accepted! Loading site..."
+                if (clearance != null && (!clearStaleClearance || clearance != initialClearance)) {
+                    status.text = "Accepted! Loading site..."
+                }
                 return false
             }
 
-            completeSaveAndClose(cookies)
-            return true
+            // Real site loaded (either with fresh cf_clearance OR without needing a challenge)
+            if (clearance != null) {
+                if (clearStaleClearance && initialClearance != null && clearance == initialClearance) {
+                    return false
+                }
+                completeSaveAndClose(cookies)
+                return true
+            }
+
+            if (pageLoadedOnce) {
+                completeSaveAndClose(cookies)
+                return true
+            }
+
+            return false
         }
 
         val cookieWatcher = object : Runnable {
@@ -533,23 +547,10 @@ object OnlyKdramaWebView {
 
             cookieManager.flush()
             val cookies = getAllSiteCookies(webView.url)
-
-            if (cookies.isBlank()) {
-                status.text = "No cookies yet — wait for page load"
-                return
-            }
-
-            val hasClearance = extractCookieValue(cookies, "cf_clearance") != null
-            if (!hasClearance && !warnedNoClearance) {
-                warnedNoClearance = true
-                status.text = "No clearance cookie yet — tap again to force save"
-                return
-            }
-
             completeSaveAndClose(cookies)
         }
 
-        // WebChromeClient
+        // WebChromeClient (also blocks ad JS popups like fake bot alerts)
         webView.webChromeClient = object : WebChromeClient() {
             override fun onProgressChanged(view: WebView?, newProgress: Int) {
                 progress.progress = newProgress
@@ -561,6 +562,37 @@ object OnlyKdramaWebView {
                     handler.postDelayed({ tryAutoSave() }, 200L)
                 }
             }
+
+            override fun onJsAlert(
+                view: WebView?,
+                url: String?,
+                message: String?,
+                result: JsResult?
+            ): Boolean {
+                result?.cancel()
+                return true
+            }
+
+            override fun onJsConfirm(
+                view: WebView?,
+                url: String?,
+                message: String?,
+                result: JsResult?
+            ): Boolean {
+                result?.cancel()
+                return true
+            }
+
+            override fun onJsPrompt(
+                view: WebView?,
+                url: String?,
+                message: String?,
+                defaultValue: String?,
+                result: JsPromptResult?
+            ): Boolean {
+                result?.cancel()
+                return true
+            }
         }
 
         // WebViewClient
@@ -570,7 +602,6 @@ object OnlyKdramaWebView {
                 url: String?,
                 favicon: android.graphics.Bitmap?
             ) {
-                warnedNoClearance = false
                 if (!saved) {
                     status.text = "Loading OnlyKDrama..."
                 }
@@ -580,13 +611,14 @@ object OnlyKdramaWebView {
             override fun onPageFinished(view: WebView?, url: String?) {
                 cookieManager.flush()
                 progress.visibility = View.GONE
+                pageLoadedOnce = true
 
                 if (!saved) {
                     handler.postDelayed({
                         if (!saved && !cleaned && !tryAutoSave()) {
                             status.text = "Tap the checkbox below — auto-saves ♡"
                         }
-                    }, 250L)
+                    }, 300L)
                 }
             }
 
@@ -614,7 +646,13 @@ object OnlyKdramaWebView {
                 request: WebResourceRequest?
             ): Boolean {
                 val uri = request?.url ?: return false
-                return uri.scheme != "https" && uri.scheme != "http"
+                val host = uri.host.orEmpty()
+                // Block external ad redirects; allow onlykdrama.shop and Cloudflare challenge domains
+                if (uri.scheme != "https" && uri.scheme != "http") return true
+                val allowed = host.endsWith("onlykdrama.shop", true) ||
+                    host.endsWith("cloudflare.com", true) ||
+                    host.endsWith("challenges.cloudflare.com", true)
+                return !allowed
             }
         }
 
@@ -766,7 +804,7 @@ object OnlyKdramaWebView {
         refresh.setOnClickListener {
             if (saved || cleaned) return@setOnClickListener
 
-            warnedNoClearance = false
+            pageLoadedOnce = false
             secureBadge.text = "● CHECK"
             secureBadge.setTextColor(SOFT_ROSE_TEXT)
             status.text = "Refreshing website..."
