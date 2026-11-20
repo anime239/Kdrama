@@ -142,12 +142,10 @@ class OnlyKdramaPlugin : Plugin() {
 
                     canvas.drawRect(rect, bgPaint)
 
-                    // Decorative pastel circles
                     canvas.drawCircle(w * 0.88f, h * 0.18f, h * 0.52f, softCirclePaint)
                     canvas.drawCircle(w * 0.72f, h * 0.92f, h * 0.38f, blushCirclePaint)
                     canvas.drawCircle(w * 0.12f, h * 0.95f, h * 0.28f, softCirclePaint)
 
-                    // Cute hearts & sparkles
                     drawHeart(canvas, w * 0.63f, h * 0.22f, dpF(14f))
                     drawHeart(canvas, w * 0.91f, h * 0.62f, dpF(10f))
                     drawSparkle(canvas, w * 0.54f, h * 0.68f, dpF(8f))
@@ -182,7 +180,7 @@ class OnlyKdramaPlugin : Plugin() {
                 }
             }
 
-            val saved = OnlyKdramaSession.hasCloudflareClearance(ctx)
+            val saved = OnlyKdramaSession.hasSavedSession(ctx)
             val clearance = OnlyKdramaWebView.hasSiteCookies()
 
             // Outer Creamy Card Shell
@@ -282,7 +280,7 @@ class OnlyKdramaPlugin : Plugin() {
             )
 
             val activeTag = TextView(ctx).apply {
-                text = if (saved && clearance) "● READY" else "● STANDBY"
+                text = if (saved || clearance) "● READY" else "● STANDBY"
                 textSize = 10f
                 typeface = Typeface.DEFAULT_BOLD
                 setTextColor(creamCanvas)
