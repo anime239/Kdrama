@@ -8,7 +8,7 @@ Cloudstream 3 extension repository for streaming Korean dramas and movies.
 * **ShortCode:** `kdrama`
 * **Repository URL:**
   ```text
-  [https://raw.githubusercontent.com/anime239/Kdrama/builds/repo.json](https://raw.githubusercontent.com/anime239/Kdrama/builds/repo.json)
+  https://raw.githubusercontent.com/anime239/Kdrama/builds/repo.json
   ```
 
 ### How to Add Manually
