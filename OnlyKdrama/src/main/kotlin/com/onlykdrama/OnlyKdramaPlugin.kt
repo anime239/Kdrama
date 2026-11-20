@@ -197,7 +197,7 @@ class OnlyKdramaPlugin : Plugin() {
                 )
             }
 
-            // Top Love-Art Banner Card (inspired by reference top pink card)
+            // Top Love-Art Banner Card
             val heroBanner = LinearLayout(ctx).apply {
                 orientation = LinearLayout.VERTICAL
                 setPadding(dp(18), dp(16), dp(18), dp(16))
@@ -254,7 +254,7 @@ class OnlyKdramaPlugin : Plugin() {
 
             heroBanner.addView(bannerTopRow)
 
-            // Embedded dark pill button inside banner (like "Request Demo" in reference)
+            // Embedded dark pill button inside banner
             val bannerActionRow = LinearLayout(ctx).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
@@ -264,6 +264,7 @@ class OnlyKdramaPlugin : Plugin() {
             val openButton = Button(ctx).apply {
                 text = "Open Website  ↗"
                 isAllCaps = false
+                maxLines = 1
                 textSize = 12f
                 typeface = Typeface.DEFAULT_BOLD
                 setTextColor(creamCanvas)
@@ -413,14 +414,14 @@ class OnlyKdramaPlugin : Plugin() {
 
             bentoRow.addView(
                 httpTile,
-                LinearLayout.LayoutParams(0, -2, 1f).apply {
+                LinearLayout.LayoutParams(0, -1, 1f).apply {
                     marginEnd = dp(6)
                 }
             )
 
             bentoRow.addView(
                 cookieTile,
-                LinearLayout.LayoutParams(0, -2, 1f).apply {
+                LinearLayout.LayoutParams(0, -1, 1f).apply {
                     marginStart = dp(6)
                 }
             )
@@ -441,7 +442,7 @@ class OnlyKdramaPlugin : Plugin() {
             }
             root.addView(noteText)
 
-            // Floating Dark Espresso Pill Dock (matching bottom bar in reference)
+            // Floating Dark Espresso Pill Dock
             val floatingDock = LinearLayout(ctx).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
@@ -452,6 +453,7 @@ class OnlyKdramaPlugin : Plugin() {
             val clearButton = Button(ctx).apply {
                 text = "Clear Session"
                 isAllCaps = false
+                maxLines = 1
                 textSize = 12f
                 typeface = Typeface.DEFAULT_BOLD
                 setTextColor(softRoseText)
@@ -465,6 +467,7 @@ class OnlyKdramaPlugin : Plugin() {
             val closeButton = Button(ctx).apply {
                 text = "✕  Close"
                 isAllCaps = false
+                maxLines = 1
                 textSize = 12f
                 typeface = Typeface.DEFAULT_BOLD
                 setTextColor(espressoInk)
