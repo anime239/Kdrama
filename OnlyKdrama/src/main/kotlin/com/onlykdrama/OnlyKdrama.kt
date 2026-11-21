@@ -3,17 +3,18 @@ package com.onlykdrama
 import android.util.Log
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
-import org.json.JSONArray
-import org.json.JSONObject
-import org.jsoup.nodes.Document
-import org.jsoup.nodes.Element
-import java.net.URLEncoder
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
+import org.json.JSONArray
+import org.json.JSONObject
+import org.jsoup.nodes.Document
+import org.jsoup.nodes.Element
+import java.net.URLEncoder
+import java.util.Locale
 import java.util.concurrent.atomic.AtomicBoolean
 
 class OnlyKdrama : MainAPI() {
@@ -29,6 +30,17 @@ class OnlyKdrama : MainAPI() {
         TvType.TvSeries,
         TvType.Movie
     )
+
+    private val tmdbApiUrl = "https://api.themoviedb.org/3"
+    private val tmdbImageBase = "https://image.tmdb.org/t/p"
+    private val tmdbToken: String
+        get() = BuildConfig.TMDB_TOKEN.trim()
+
+    private val tmdbHeaders: Map<String, String>
+        get() = mapOf(
+            "Authorization" to "Bearer $tmdbToken",
+            "accept" to "application/json"
+        )
 
     private val headers = mapOf(
         "user-agent" to "Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Mobile Safari/537.36",
@@ -53,6 +65,33 @@ class OnlyKdrama : MainAPI() {
         "/genres/horror/" to "Horror",
         "/genres/adventure/" to "Adventure",
         "/genres/sci-fi/" to "Sci-Fi"
+    )
+
+    private data class TmdbCastMember(
+        val name: String,
+        val role: String?,
+        val image: String?
+    )
+
+    private data class TmdbMetadata(
+        val posterUrl: String?,
+        val backdropUrl: String?,
+        val logoUrl: String?,
+        val synopsis: String?,
+        val rating: Double?,
+        val year: Int?,
+        val tags: List<String>,
+        val trailerUrl: String?,
+        val cast: List<TmdbCastMember>,
+        val status: ShowStatus?,
+        val duration: Int?
+    )
+
+    private data class ParsedTitleInfo(
+        val searchQueries: List<String>,
+        val normalizedPrimary: String,
+        val yearHint: Int?,
+        val originCountryHint: String?
     )
 
     private fun absolute(url: String?): String? {
@@ -543,6 +582,439 @@ class OnlyKdrama : MainAPI() {
             ?.toInt()
     }
 
+    // ==================== TMDB MATCHING & METADATA ====================
+
+    private fun normalizeForComparison(text: String): String {
+        return text.lowercase(Locale.ROOT)
+            .replace(Regex("""[^\p{L}\p{N}\s]"""), " ")
+            .replace(Regex("""\s+"""), " ")
+            .trim()
+    }
+
+    private fun parseOnlyKdramaTitle(rawTitle: String, pageYear: Int?): ParsedTitleInfo {
+        val lower = rawTitle.lowercase(Locale.ROOT)
+
+        val originCountryHint = when {
+            Regex("""\b(?:korean|k-?drama|k-?movie)\b""").containsMatchIn(lower) -> "KR"
+            Regex("""\b(?:chinese|c-?drama|c-?movie)\b""").containsMatchIn(lower) -> "CN"
+            Regex("""\b(?:japanese|j-?drama|j-?movie)\b""").containsMatchIn(lower) -> "JP"
+            Regex("""\b(?:thai|t-?drama|t-?movie)\b""").containsMatchIn(lower) -> "TH"
+            Regex("""\b(?:taiwanese|tw-?drama)\b""").containsMatchIn(lower) -> "TW"
+            Regex("""\b(?:filipino|pinoy)\b""").containsMatchIn(lower) -> "PH"
+            else -> null
+        }
+
+        val titleYear = Regex("""[\(\[\s]((?:19|20)\d{2})[\)\]\s]?""")
+            .find(rawTitle)
+            ?.groupValues
+            ?.getOrNull(1)
+            ?.toIntOrNull()
+            ?: pageYear
+
+        val altBracketTitle = Regex("""\(([^()]{3,60})\)""")
+            .findAll(rawTitle)
+            .map { it.groupValues[1].trim() }
+            .firstOrNull { inside ->
+                !Regex("""^(?:19|20)\d{2}$""").matches(inside) &&
+                    !Regex("""(?i)^(?:english|hindi|korean|chinese|japanese|thai|dubbed|subbed|dual audio|season \d+|s\d+|complete).*$""").matches(inside)
+            }
+
+        var cleaned = rawTitle
+            .replace(Regex("""[\(\[]\s*(?:19|20)\d{2}\s*[\)\]]"""), " ")
+            .replace(
+                Regex("""(?i)[\(\[]\s*(?:english|hindi|korean|chinese|japanese|thai|dual\s*audio|multi\s*audio|eng\s*sub|hindi\s*sub|dubbed|subbed|uncut|complete|full\s*movie|s\d+|season\s*\d+)[^)\]]*[\)\]]"""),
+                " "
+            )
+            .replace(
+                Regex("""(?i)\b(?:english|hindi|urdu|tamil|telugu|dual\s*audio|multi\s*audio|eng\s*sub|hindi\s*sub|dubbed|subbed)\b"""),
+                " "
+            )
+            .replace(
+                Regex("""(?i)\b(?:korean|chinese|japanese|thai|taiwanese|filipino|pinoy|asian|k|c|j|t)?\s*-?\s*(?:drama|series|movie|film|web\s*series)\b"""),
+                " "
+            )
+            .replace(
+                Regex("""(?i)\b(?:season|part)\s*\d+\b|\bS0*\d+\b|\b(?:complete|all\s*episodes|episodes?\s*\d+(?:\s*-\s*\d+)?)\b"""),
+                " "
+            )
+            .replace(Regex("""\b(?:19|20)\d{2}\b\s*$"""), " ")
+            .replace(Regex("""[\|\-\–\—:/]+\s*$"""), " ")
+            .replace(Regex("""\s+"""), " ")
+            .trim()
+
+        if (cleaned.isBlank()) {
+            cleaned = rawTitle.substringBefore("(").trim()
+        }
+
+        val candidates = linkedSetOf<String>()
+        if (cleaned.isNotBlank()) candidates.add(cleaned)
+
+        cleaned.split(Regex("""\s*[/|]\s*"""))
+            .map { it.trim() }
+            .filter { it.length >= 2 }
+            .forEach { candidates.add(it) }
+
+        val beforeColon = cleaned.substringBefore(":").trim()
+        if (beforeColon.length >= 3 && !beforeColon.equals(cleaned, true)) {
+            candidates.add(beforeColon)
+        }
+
+        val beforeDash = cleaned.substringBefore(" - ").trim()
+        if (beforeDash.length >= 3 && !beforeDash.equals(cleaned, true)) {
+            candidates.add(beforeDash)
+        }
+
+        if (!altBracketTitle.isNullOrBlank()) {
+            candidates.add(altBracketTitle)
+        }
+
+        return ParsedTitleInfo(
+            searchQueries = candidates.toList(),
+            normalizedPrimary = normalizeForComparison(cleaned),
+            yearHint = titleYear,
+            originCountryHint = originCountryHint
+        )
+    }
+
+    private fun scoreTmdbCandidate(
+        item: JSONObject,
+        mediaType: String,
+        parsed: ParsedTitleInfo
+    ): Double {
+        val title = if (mediaType == "movie") {
+            item.optString("title")
+        } else {
+            item.optString("name")
+        }.trim()
+
+        val originalTitle = if (mediaType == "movie") {
+            item.optString("original_title")
+        } else {
+            item.optString("original_name")
+        }.trim()
+
+        val normTitle = normalizeForComparison(title)
+        val normOriginal = normalizeForComparison(originalTitle)
+        val target = parsed.normalizedPrimary
+
+        if (normTitle.isBlank() && normOriginal.isBlank()) return -100.0
+
+        var score = 0.0
+
+        val bestTitleScore = listOf(normTitle, normOriginal)
+            .filter { it.isNotBlank() }
+            .maxOfOrNull { candidate ->
+                when {
+                    candidate == target -> 100.0
+                    candidate.startsWith(target) || target.startsWith(candidate) -> 70.0
+                    candidate.contains(target) || target.contains(candidate) -> 55.0
+                    else -> {
+                        val targetWords = target.split(" ").filter { it.length > 1 }.toSet()
+                        val candWords = candidate.split(" ").filter { it.length > 1 }.toSet()
+                        if (targetWords.isEmpty() || candWords.isEmpty()) 0.0
+                        else {
+                            val overlap = targetWords.intersect(candWords).size.toDouble()
+                            (overlap / maxOf(targetWords.size, candWords.size)) * 60.0
+                        }
+                    }
+                }
+            } ?: 0.0
+
+        score += bestTitleScore
+
+        val dateStr = if (mediaType == "movie") {
+            item.optString("release_date")
+        } else {
+            item.optString("first_air_date")
+        }
+        val itemYear = dateStr.take(4).toIntOrNull()
+
+        if (parsed.yearHint != null && itemYear != null) {
+            val diff = kotlin.math.abs(parsed.yearHint - itemYear)
+            score += when {
+                diff == 0 -> 60.0
+                diff == 1 -> 25.0
+                diff >= 3 -> -35.0
+                else -> 0.0
+            }
+        }
+
+        val origins = mutableSetOf<String>()
+        val originArray = item.optJSONArray("origin_country")
+        if (originArray != null) {
+            for (i in 0 until originArray.length()) {
+                origins.add(originArray.optString(i).uppercase(Locale.ROOT))
+            }
+        }
+        val origLang = item.optString("original_language").lowercase(Locale.ROOT)
+        if (origLang == "ko") origins.add("KR")
+        if (origLang == "zh") origins.add("CN")
+        if (origLang == "ja") origins.add("JP")
+        if (origLang == "th") origins.add("TH")
+
+        val asianCountries = setOf("KR", "CN", "JP", "TH", "TW", "PH", "HK")
+
+        if (parsed.originCountryHint != null) {
+            if (origins.contains(parsed.originCountryHint)) {
+                score += 55.0
+            } else if (origins.any { it in asianCountries }) {
+                score += 15.0
+            }
+        } else if (origins.any { it in asianCountries }) {
+            score += 20.0
+        }
+
+        val popularity = item.optDouble("popularity", 0.0)
+        score += minOf(popularity / 25.0, 10.0)
+
+        return score
+    }
+
+    private suspend fun searchBestTmdbMatch(
+        parsed: ParsedTitleInfo,
+        isMovie: Boolean
+    ): Pair<Int, String>? {
+        val primaryType = if (isMovie) "movie" else "tv"
+        val fallbackType = if (isMovie) "tv" else "movie"
+
+        var bestId: Int? = null
+        var bestType: String = primaryType
+        var bestScore = 35.0
+
+        for (query in parsed.searchQueries.take(3)) {
+            val encoded = URLEncoder.encode(query, "UTF-8")
+
+            for (mediaType in listOf(primaryType, fallbackType)) {
+                val searchUrl = buildString {
+                    append("$tmdbApiUrl/search/$mediaType?query=$encoded")
+                    append("&include_adult=false&language=en-US&page=1")
+                    if (parsed.yearHint != null) {
+                        if (mediaType == "movie") {
+                            append("&year=${parsed.yearHint}")
+                        } else {
+                            append("&first_air_date_year=${parsed.yearHint}")
+                        }
+                    }
+                }
+
+                val json = runCatching {
+                    JSONObject(app.get(searchUrl, headers = tmdbHeaders).text)
+                }.getOrNull() ?: continue
+
+                val results = json.optJSONArray("results") ?: continue
+                for (i in 0 until minOf(results.length(), 10)) {
+                    val item = results.optJSONObject(i) ?: continue
+                    val id = item.optInt("id", 0)
+                    if (id <= 0) continue
+
+                    var candidateScore = scoreTmdbCandidate(item, mediaType, parsed)
+                    if (mediaType == primaryType) candidateScore += 10.0
+
+                    if (candidateScore > bestScore) {
+                        bestScore = candidateScore
+                        bestId = id
+                        bestType = mediaType
+                    }
+                }
+
+                if (bestId != null && bestType == primaryType && bestScore >= 145.0) {
+                    return bestId to bestType
+                }
+            }
+
+            if (bestId == null && parsed.yearHint != null) {
+                val noYearUrl =
+                    "$tmdbApiUrl/search/$primaryType?query=$encoded&include_adult=false&language=en-US&page=1"
+                val json = runCatching {
+                    JSONObject(app.get(noYearUrl, headers = tmdbHeaders).text)
+                }.getOrNull()
+
+                val results = json?.optJSONArray("results")
+                if (results != null) {
+                    for (i in 0 until minOf(results.length(), 10)) {
+                        val item = results.optJSONObject(i) ?: continue
+                        val id = item.optInt("id", 0)
+                        if (id <= 0) continue
+
+                        val candidateScore = scoreTmdbCandidate(item, primaryType, parsed)
+                        if (candidateScore > bestScore) {
+                            bestScore = candidateScore
+                            bestId = id
+                            bestType = primaryType
+                        }
+                    }
+                }
+            }
+        }
+
+        return bestId?.let { it to bestType }
+    }
+
+    private suspend fun fetchTmdbMetadata(
+        rawTitle: String,
+        pageYear: Int?,
+        isMovie: Boolean
+    ): TmdbMetadata? {
+        if (tmdbToken.isBlank()) {
+            Log.w("OnlyKDrama", "TMDB_TOKEN is empty; skipping TMDB metadata fetch.")
+            return null
+        }
+
+        return try {
+            val parsed = parseOnlyKdramaTitle(rawTitle, pageYear)
+            val match = searchBestTmdbMatch(parsed, isMovie) ?: return null
+            val (tmdbId, mediaType) = match
+
+            val detailUrl =
+                "$tmdbApiUrl/$mediaType/$tmdbId?language=en-US&append_to_response=credits,videos,images&include_image_language=en,null"
+
+            val data = JSONObject(app.get(detailUrl, headers = tmdbHeaders).text)
+
+            val posterPath = data.optString("poster_path").takeIf {
+                it.isNotBlank() && it != "null"
+            }
+            val backdropPath = data.optString("backdrop_path").takeIf {
+                it.isNotBlank() && it != "null"
+            }
+
+            val logos = data.optJSONObject("images")?.optJSONArray("logos")
+            var bestLogoPath: String? = null
+            var bestLogoScore = -1.0
+            if (logos != null) {
+                for (i in 0 until logos.length()) {
+                    val logo = logos.optJSONObject(i) ?: continue
+                    val path = logo.optString("file_path").takeIf {
+                        it.isNotBlank() && it != "null"
+                    } ?: continue
+
+                    val lang = logo.optString("iso_639_1")
+                    val voteAvg = logo.optDouble("vote_average", 0.0)
+                    val width = logo.optInt("width", 0)
+
+                    val logoScore = (if (lang == "en") 100.0 else if (lang == "null" || lang.isBlank()) 50.0 else 10.0) +
+                        voteAvg +
+                        (if (width >= 300) 10.0 else 0.0)
+
+                    if (logoScore > bestLogoScore) {
+                        bestLogoScore = logoScore
+                        bestLogoPath = path
+                    }
+                }
+            }
+
+            val synopsis = data.optString("overview").trim().takeIf {
+                it.isNotBlank() && it != "null"
+            }
+
+            val rating = data.optDouble("vote_average", 0.0).takeIf { it > 0.0 }
+
+            val dateStr = if (mediaType == "movie") {
+                data.optString("release_date")
+            } else {
+                data.optString("first_air_date")
+            }
+            val year = dateStr.take(4).toIntOrNull()
+
+            val tags = mutableListOf<String>()
+            val genresArray = data.optJSONArray("genres")
+            if (genresArray != null) {
+                for (i in 0 until genresArray.length()) {
+                    val gName = genresArray.optJSONObject(i)?.optString("name")?.trim()
+                    if (!gName.isNullOrBlank()) tags.add(gName)
+                }
+            }
+
+            val castList = mutableListOf<TmdbCastMember>()
+            val castArray = data.optJSONObject("credits")?.optJSONArray("cast")
+            if (castArray != null) {
+                for (i in 0 until minOf(castArray.length(), 20)) {
+                    val person = castArray.optJSONObject(i) ?: continue
+                    val actorName = person.optString("name").trim()
+                        .ifBlank { person.optString("original_name").trim() }
+                    if (actorName.isBlank()) continue
+
+                    val character = person.optString("character").trim().takeIf {
+                        it.isNotBlank() && it != "null"
+                    }
+                    val profilePath = person.optString("profile_path").takeIf {
+                        it.isNotBlank() && it != "null"
+                    }
+
+                    castList.add(
+                        TmdbCastMember(
+                            name = actorName,
+                            role = character,
+                            image = profilePath?.let { "$tmdbImageBase/w300$it" }
+                        )
+                    )
+                }
+            }
+
+            var trailerUrl: String? = null
+            var bestTrailerScore = -1
+            val videosArray = data.optJSONObject("videos")?.optJSONArray("results")
+            if (videosArray != null) {
+                for (i in 0 until videosArray.length()) {
+                    val video = videosArray.optJSONObject(i) ?: continue
+                    val site = video.optString("site")
+                    val key = video.optString("key").trim()
+                    if (!site.equals("YouTube", true) || key.isBlank()) continue
+
+                    val type = video.optString("type")
+                    val official = video.optBoolean("official", false)
+
+                    val videoScore = when {
+                        type.equals("Trailer", true) && official -> 100
+                        type.equals("Trailer", true) -> 80
+                        type.equals("Teaser", true) && official -> 60
+                        type.equals("Teaser", true) -> 40
+                        else -> 10
+                    }
+
+                    if (videoScore > bestTrailerScore) {
+                        bestTrailerScore = videoScore
+                        trailerUrl = "https://www.youtube.com/watch?v=$key"
+                    }
+                }
+            }
+
+            val status = when (data.optString("status").lowercase(Locale.ROOT)) {
+                "returning series", "in production", "planned" -> ShowStatus.Ongoing
+                "ended", "canceled" -> ShowStatus.Completed
+                else -> null
+            }
+
+            val duration = if (mediaType == "movie") {
+                data.optInt("runtime", 0).takeIf { it > 0 }
+            } else {
+                data.optJSONArray("episode_run_time")
+                    ?.optInt(0, 0)
+                    ?.takeIf { it > 0 }
+            }
+
+            TmdbMetadata(
+                posterUrl = posterPath?.let { "$tmdbImageBase/w780$it" },
+                backdropUrl = backdropPath?.let { "$tmdbImageBase/w1280$it" },
+                logoUrl = bestLogoPath?.let { "$tmdbImageBase/w500$it" },
+                synopsis = synopsis,
+                rating = rating,
+                year = year,
+                tags = tags.distinct(),
+                trailerUrl = trailerUrl,
+                cast = castList,
+                status = status,
+                duration = duration
+            )
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.e("OnlyKDrama", "TMDB metadata fetch failed for '$rawTitle': ${e.message}")
+            null
+        }
+    }
+
+    // ==================== LINKS & EPISODE PARSING ====================
+
     private fun parseMovieLinks(document: Document): String {
         val root = document.selectFirst(
             "#info .wp-content > .wp-block-ub-content-toggle-block"
@@ -851,13 +1323,28 @@ class OnlyKdrama : MainAPI() {
             ?: document.selectFirst("h1")?.text()?.trim()
             ?: return null
 
-        val poster = getDetailPoster(document)
-        val plot = getSynopsis(document)
-        val tags = getTags(document)
-        val year = getYear(document)
-        val rating = getRating(document)
+        val sitePoster = getDetailPoster(document)
+        val sitePlot = getSynopsis(document)
+        val siteTags = getTags(document)
+        val siteYear = getYear(document)
+        val siteRating = getRating(document)
 
         val isMovie = url.contains("/movies/")
+        val tmdb = fetchTmdbMetadata(title, siteYear, isMovie)
+
+        val finalPoster = tmdb?.posterUrl ?: sitePoster
+        val finalBackdrop = tmdb?.backdropUrl ?: finalPoster
+        val finalPlot = tmdb?.synopsis ?: sitePlot
+        val finalYear = tmdb?.year ?: siteYear
+        val finalTags = (tmdb?.tags.orEmpty() + siteTags).distinct()
+        val finalScore = tmdb?.rating?.let { Score.from10(it) }
+            ?: siteRating?.let { Score.from10(it) }
+        val finalActors = tmdb?.cast?.map { member ->
+            ActorData(
+                Actor(member.name, member.image),
+                roleString = member.role
+            )
+        }.orEmpty()
 
         if (isMovie) {
             val movieData = parseMovieLinks(document)
@@ -878,18 +1365,23 @@ class OnlyKdrama : MainAPI() {
                 TvType.Movie,
                 movieData
             ) {
-                posterUrl = poster
-                this.plot = plot
-                this.year = year
-                this.tags = tags
-                this.score = rating?.let { Score.from10(it) }
+                this.posterUrl = finalPoster
+                this.backgroundPosterUrl = finalBackdrop
+                this.logoUrl = tmdb?.logoUrl
+                this.plot = finalPlot
+                this.year = finalYear
+                this.tags = finalTags
+                this.score = finalScore
+                this.duration = tmdb?.duration
+                if (finalActors.isNotEmpty()) addActors(finalActors)
+                tmdb?.trailerUrl?.let { addTrailer(it) }
             }
         }
 
         val episodes = parseEpisodes(
             document,
-            poster,
-            plot
+            finalPoster,
+            finalPlot
         )
 
         if (episodes.isEmpty()) {
@@ -904,11 +1396,17 @@ class OnlyKdrama : MainAPI() {
             TvType.TvSeries,
             episodes
         ) {
-            posterUrl = poster
-            this.plot = plot
-            this.year = year
-            this.tags = tags
-            this.score = rating?.let { Score.from10(it) }
+            this.posterUrl = finalPoster
+            this.backgroundPosterUrl = finalBackdrop
+            this.logoUrl = tmdb?.logoUrl
+            this.plot = finalPlot
+            this.year = finalYear
+            this.tags = finalTags
+            this.score = finalScore
+            this.showStatus = tmdb?.status
+            this.duration = tmdb?.duration
+            if (finalActors.isNotEmpty()) addActors(finalActors)
+            tmdb?.trailerUrl?.let { addTrailer(it) }
         }
     }
 
