@@ -46,6 +46,8 @@ jobs:
         uses: android-actions/setup-android@v4
 
       - name: Build Plugins
+        env:
+          TMDB_TOKEN: ${{ vars.TMDB_TOKEN }}
         run: |
           cd $GITHUB_WORKSPACE/src
           chmod +x gradlew
