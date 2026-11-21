@@ -2,10 +2,9 @@ package com.onlykdrama
 
 import android.util.Log
 import com.lagradost.cloudstream3.*
-import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.LoadResponse.Companion.addActors
 import com.lagradost.cloudstream3.LoadResponse.Companion.addTrailer
-import com.onlykdrama.BuildConfig
+import com.lagradost.cloudstream3.utils.*
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -77,6 +76,8 @@ class OnlyKdrama : MainAPI() {
     )
 
     private data class TmdbMetadata(
+        val tmdbId: Int,
+        val mediaType: String,
         val posterUrl: String?,
         val backdropUrl: String?,
         val logoUrl: String?,
@@ -90,10 +91,17 @@ class OnlyKdrama : MainAPI() {
         val duration: Int?
     )
 
+    private data class TmdbEpisodeInfo(
+        val name: String?,
+        val overview: String?,
+        val stillUrl: String?
+    )
+
     private data class ParsedTitleInfo(
         val searchQueries: List<String>,
         val normalizedPrimary: String,
         val yearHint: Int?,
+        val seasonHint: Int?,
         val originCountryHint: String?
     )
 
@@ -611,10 +619,13 @@ class OnlyKdrama : MainAPI() {
             else -> null
         }
 
-        val hasExplicitSeason = Regex("""(?i)\b(?:season|part)\s*0*[2-9]\d*\b|\bS0*[2-9]\d*\b""")
-            .containsMatchIn(rawTitle)
+        val seasonMatch = Regex("""(?i)\b(?:season|part)\s*0*(\d+)\b|\bS0*(\d+)\b""")
+            .find(rawTitle)
+        val seasonHint = seasonMatch?.let { match ->
+            (match.groupValues[1].ifBlank { match.groupValues[2] }).toIntOrNull()
+        }
 
-        val titleYear = if (hasExplicitSeason) {
+        val titleYear = if ((seasonHint ?: 1) > 1) {
             null
         } else {
             Regex("""[\(\[\s]((?:19|20)\d{2})[\)\]\s]?""")
@@ -687,6 +698,7 @@ class OnlyKdrama : MainAPI() {
             searchQueries = candidates.toList(),
             normalizedPrimary = normalizeForComparison(cleaned),
             yearHint = titleYear,
+            seasonHint = seasonHint,
             originCountryHint = originCountryHint
         )
     }
@@ -840,8 +852,7 @@ class OnlyKdrama : MainAPI() {
     }
 
     private suspend fun fetchTmdbMetadata(
-        rawTitle: String,
-        pageYear: Int?,
+        parsed: ParsedTitleInfo,
         isMovie: Boolean
     ): TmdbMetadata? {
         if (tmdbToken.isBlank()) {
@@ -850,7 +861,6 @@ class OnlyKdrama : MainAPI() {
         }
 
         return try {
-            val parsed = parseOnlyKdramaTitle(rawTitle, pageYear)
             val match = searchBestTmdbMatch(parsed, isMovie) ?: return null
             val (tmdbId, mediaType) = match
 
@@ -982,6 +992,8 @@ class OnlyKdrama : MainAPI() {
             }
 
             TmdbMetadata(
+                tmdbId = tmdbId,
+                mediaType = mediaType,
                 posterUrl = posterPath?.let { "$tmdbImageBase/w780$it" },
                 backdropUrl = backdropPath?.let { "$tmdbImageBase/w1280$it" },
                 logoUrl = bestLogoPath?.let { "$tmdbImageBase/w500$it" },
@@ -997,8 +1009,58 @@ class OnlyKdrama : MainAPI() {
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            Log.e("OnlyKDrama", "TMDB metadata fetch failed for '$rawTitle': ${e.message}")
+            Log.e("OnlyKDrama", "TMDB metadata fetch failed: ${e.message}")
             null
+        }
+    }
+
+    private suspend fun fetchTmdbSeasonEpisodes(
+        tmdbId: Int,
+        seasons: Set<Int>
+    ): Map<Pair<Int, Int>, TmdbEpisodeInfo> {
+        if (tmdbToken.isBlank() || seasons.isEmpty()) return emptyMap()
+
+        return coroutineScope {
+            seasons.map { seasonNum ->
+                async {
+                    try {
+                        val seasonUrl = "$tmdbApiUrl/tv/$tmdbId/season/$seasonNum?language=en-US"
+                        val data = JSONObject(app.get(seasonUrl, headers = tmdbHeaders).text)
+                        val epArray = data.optJSONArray("episodes") ?: return@async emptyList()
+
+                        val list = mutableListOf<Pair<Pair<Int, Int>, TmdbEpisodeInfo>>()
+                        for (i in 0 until epArray.length()) {
+                            val ep = epArray.optJSONObject(i) ?: continue
+                            val epNum = ep.optInt("episode_number", 0)
+                            if (epNum <= 0) continue
+
+                            val epName = ep.optString("name").trim().takeIf {
+                                it.isNotBlank() && it != "null"
+                            }
+                            val overview = ep.optString("overview").trim().takeIf {
+                                it.isNotBlank() && it != "null"
+                            }
+                            val stillPath = ep.optString("still_path").trim().takeIf {
+                                it.isNotBlank() && it != "null"
+                            }
+
+                            list.add(
+                                (seasonNum to epNum) to TmdbEpisodeInfo(
+                                    name = epName,
+                                    overview = overview,
+                                    stillUrl = stillPath?.let { "$tmdbImageBase/w780$it" }
+                                )
+                            )
+                        }
+                        list
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        Log.e("OnlyKDrama", "Failed fetching TMDB season $seasonNum for id=$tmdbId: ${e.message}")
+                        emptyList()
+                    }
+                }
+            }.awaitAll().flatten().toMap()
         }
     }
 
@@ -1066,8 +1128,9 @@ class OnlyKdrama : MainAPI() {
 
     private fun parseEpisodes(
         document: Document,
-        poster: String?,
-        plot: String?
+        defaultSeason: Int,
+        fallbackPoster: String?,
+        fallbackPlot: String?
     ): List<Episode> {
         val contentRoot = document.selectFirst("#info .wp-content")
             ?: return emptyList()
@@ -1087,6 +1150,14 @@ class OnlyKdrama : MainAPI() {
                 ".wp-block-ub-content-toggle-accordion-content-wrap " +
                     ".wp-block-ub-content-toggle-accordion"
             ) != null
+        }
+
+        val shortFallbackPlot = fallbackPlot?.take(180)?.let {
+            if (fallbackPlot.length > 180) {
+                "${it.substringBeforeLast(" ")}..."
+            } else {
+                it
+            }
         }
 
         val results = mutableListOf<Episode>()
@@ -1186,7 +1257,7 @@ class OnlyKdrama : MainAPI() {
                     """(?i)\bS(?:eason)?\s*0*(\d+)"""
                 ).find(episodeTitle)
                     ?.groupValues?.getOrNull(1)
-                    ?.toIntOrNull() ?: 1
+                    ?.toIntOrNull() ?: defaultSeason
 
                 val episodeData = JSONObject()
                     .put("title", episodeTitle)
@@ -1197,14 +1268,8 @@ class OnlyKdrama : MainAPI() {
                     name = episodeTitle
                     season = seasonNumber
                     episode = episodeNumber
-                    posterUrl = poster
-                    description = plot?.take(180)?.let {
-                        if (plot.length > 180) {
-                            "${it.substringBeforeLast(" ")}..."
-                        } else {
-                            it
-                        }
-                    }
+                    posterUrl = fallbackPoster
+                    description = shortFallbackPlot
                 })
             }
         } else {
@@ -1250,7 +1315,7 @@ class OnlyKdrama : MainAPI() {
                         """(?i)\bS\s*0*(\d{1,2})\s*E\s*0*(\d{1,3})\b"""
                     ).find(sourceText) ?: continue
 
-                    val season = match.groupValues[1].toIntOrNull() ?: 1
+                    val season = match.groupValues[1].toIntOrNull() ?: defaultSeason
                     val episode = match.groupValues[2].toIntOrNull() ?: continue
 
                     val key = season to episode
@@ -1283,20 +1348,14 @@ class OnlyKdrama : MainAPI() {
                     name = episodeTitle
                     season = group.season
                     episode = group.episode
-                    posterUrl = poster
-                    description = plot?.take(180)?.let {
-                        if (plot.length > 180) {
-                            "${it.substringBeforeLast(" ")}..."
-                        } else {
-                            it
-                        }
-                    }
+                    posterUrl = fallbackPoster
+                    description = shortFallbackPlot
                 })
             }
         }
 
         return results.sortedWith(
-            compareBy<Episode> { it.season ?: 1 }
+            compareBy<Episode> { it.season ?: defaultSeason }
                 .thenBy { it.episode ?: 0 }
         )
     }
@@ -1319,7 +1378,8 @@ class OnlyKdrama : MainAPI() {
         val siteRating = getRating(document)
 
         val isMovie = url.contains("/movies/")
-        val tmdb = fetchTmdbMetadata(title, siteYear, isMovie)
+        val parsedTitle = parseOnlyKdramaTitle(title, siteYear)
+        val tmdb = fetchTmdbMetadata(parsedTitle, isMovie)
 
         val finalPoster = tmdb?.posterUrl ?: sitePoster
         val finalBackdrop = tmdb?.backdropUrl ?: finalPoster
@@ -1365,15 +1425,39 @@ class OnlyKdrama : MainAPI() {
         }
 
         val episodes = parseEpisodes(
-            document,
-            finalPoster,
-            finalPlot
+            document = document,
+            defaultSeason = parsedTitle.seasonHint ?: 1,
+            fallbackPoster = finalBackdrop,
+            fallbackPlot = finalPlot
         )
 
         if (episodes.isEmpty()) {
             throw ErrorLoadingException(
                 "No episode download links found on this drama page."
             )
+        }
+
+        if (tmdb != null && tmdb.mediaType == "tv") {
+            val seasonNumbers = episodes.mapNotNull { it.season }.toSet()
+            val tmdbEpisodes = fetchTmdbSeasonEpisodes(tmdb.tmdbId, seasonNumbers)
+
+            if (tmdbEpisodes.isNotEmpty()) {
+                for (ep in episodes) {
+                    val s = ep.season ?: continue
+                    val e = ep.episode ?: continue
+                    val info = tmdbEpisodes[s to e] ?: continue
+
+                    if (!info.name.isNullOrBlank()) {
+                        ep.name = info.name
+                    }
+                    if (!info.stillUrl.isNullOrBlank()) {
+                        ep.posterUrl = info.stillUrl
+                    }
+                    if (!info.overview.isNullOrBlank()) {
+                        ep.description = info.overview
+                    }
+                }
+            }
         }
 
         return newTvSeriesLoadResponse(
