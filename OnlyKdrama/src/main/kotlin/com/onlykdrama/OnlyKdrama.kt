@@ -192,29 +192,99 @@ class OnlyKdrama : MainAPI() {
         Log.e("OnlyKDrama", "Extractor error: $message")
     }
 
-    private fun getPoster(article: Element): String? {
-        val image = article.selectFirst(".poster img") ?: return null
+    private fun parseBestSrcsetUrl(srcset: String): String? {
+        if (srcset.isBlank()) return null
 
-        val attributes = listOf(
-            "src",
-            "data-src",
-            "data-lazy-src",
-            "data-original",
-            "data-image",
-            "data-lazy"
+        return srcset
+            .split(Regex("""(?<=\s\d+(?:\.\d+)?[wx]),\s*"""))
+            .mapNotNull { entry ->
+                val parts = entry.trim().split(Regex("""\s+"""))
+                val rawUrl = parts.firstOrNull()?.takeIf {
+                    it.isNotBlank() && !it.startsWith("data:")
+                } ?: return@mapNotNull null
+
+                val descriptor = parts.getOrNull(1).orEmpty().lowercase()
+                val score = when {
+                    descriptor.endsWith("w") ->
+                        descriptor.removeSuffix("w").toFloatOrNull() ?: 0f
+                    descriptor.endsWith("x") ->
+                        (descriptor.removeSuffix("x").toFloatOrNull() ?: 0f) * 1000f
+                    else -> 0f
+                }
+
+                rawUrl to score
+            }
+            .maxByOrNull { it.second }
+            ?.first
+    }
+
+    private fun upgradePosterUrl(url: String): String {
+        var upgraded = url
+
+        upgraded = upgraded.replace(
+            Regex(
+                """-\d{2,4}x\d{2,4}(?=\.(?:jpe?g|png|webp|avif)(?:\?.*)?$)""",
+                RegexOption.IGNORE_CASE
+            ),
+            ""
         )
 
-        for (attribute in attributes) {
-            val value = image.attr(attribute).trim()
+        upgraded = upgraded.replace(
+            Regex("""/t/p/w(?:92|154|185|300|342)/"""),
+            "/t/p/w780/"
+        )
 
-            if (value.isBlank() || value.startsWith("data:")) {
-                continue
+        if (upgraded.contains(".wp.com/")) {
+            upgraded = upgraded
+                .replace(Regex("""([?&])(?:resize|fit|w|h)=[^&]*"""), "$1")
+                .replace(Regex("""\?&+"""), "?")
+                .replace(Regex("""&{2,}"""), "&")
+                .trimEnd('?', '&')
+        }
+
+        return upgraded
+    }
+
+    private fun extractBestPoster(image: Element?): String? {
+        if (image == null) return null
+
+        val srcsetAttributes = listOf(
+            "data-lazy-srcset",
+            "data-srcset",
+            "srcset"
+        )
+        for (attr in srcsetAttributes) {
+            val bestFromSrcset = parseBestSrcsetUrl(image.attr(attr))
+            val resolved = absolute(bestFromSrcset)
+            if (resolved != null) {
+                return upgradePosterUrl(resolved)
             }
+        }
 
-            return absolute(value)
+        val imageAttributes = listOf(
+            "data-lazy-src",
+            "data-src",
+            "data-original",
+            "data-image",
+            "data-lazy",
+            "src"
+        )
+        for (attr in imageAttributes) {
+            val value = image.attr(attr).trim()
+            if (value.isBlank() || value.startsWith("data:")) continue
+
+            val resolved = absolute(value)
+            if (resolved != null) {
+                return upgradePosterUrl(resolved)
+            }
         }
 
         return null
+    }
+
+    private fun getPoster(article: Element): String? {
+        return extractBestPoster(article.selectFirst(".poster img"))
+            ?: extractBestPoster(article.selectFirst(".poster noscript img"))
     }
 
     private fun getDramaUrl(article: Element): String? {
@@ -277,28 +347,8 @@ class OnlyKdrama : MainAPI() {
     }
 
     private fun getSearchPoster(card: Element): String? {
-        val image = card.selectFirst(".image img") ?: return null
-
-        val attributes = listOf(
-            "data-lazy-src",
-            "data-src",
-            "data-original",
-            "data-image",
-            "data-lazy",
-            "src"
-        )
-
-        for (attribute in attributes) {
-            val value = image.attr(attribute).trim()
-
-            if (value.isBlank() || value.startsWith("data:")) {
-                continue
-            }
-
-            return absolute(value)
-        }
-
-        return null
+        return extractBestPoster(card.selectFirst(".image img"))
+            ?: extractBestPoster(card.selectFirst(".image noscript img"))
     }
 
     private fun parseSearch(
@@ -439,29 +489,8 @@ class OnlyKdrama : MainAPI() {
     }
 
     private fun getDetailPoster(document: Document): String? {
-        val image = document.selectFirst(
-            "#single .sheader .poster img"
-        ) ?: return null
-
-        val attributes = listOf(
-            "src",
-            "data-src",
-            "data-lazy-src",
-            "data-original",
-            "data-image"
-        )
-
-        for (attribute in attributes) {
-            val value = image.attr(attribute).trim()
-
-            if (value.isBlank() || value.startsWith("data:")) {
-                continue
-            }
-
-            return absolute(value)
-        }
-
-        return null
+        return extractBestPoster(document.selectFirst("#single .sheader .poster img"))
+            ?: extractBestPoster(document.selectFirst("#single .sheader .poster noscript img"))
     }
 
     private fun getSynopsis(document: Document): String? {
