@@ -50,20 +50,20 @@ class OnlyKdrama : MainAPI() {
         "accept-language" to "en-US,en;q=0.9"
     )
 
-    private val requestSemaphore = Semaphore(2)
+    private val requestSemaphore = Semaphore(5)
 
     override val mainPage = mainPageOf(
-        "" to "Latest Releases",
-        "/drama/" to "Popular Dramas",
+        "" to "New Releases",
+        "/drama/" to "TV Shows",
         "/movies/" to "Movies",
-        //"/genres/ongoing/" to "On Air",
-        "/genres/romance/" to "Romantic Dramas",
-        "/genres/comedy/" to "Cozy Rom-Coms",
+        //"/genres/ongoing/" to "Ongoing",
+        "/genres/romance/" to "Romance",
+        "/genres/comedy/" to "Comedy",
         //"/genres/youth/" to "Youth",
-        "/genres/action/" to "Action Dramas",
-        "/genres/thriller/" to "Thrillers",
+        "/genres/action/" to "Action",
+        "/genres/thriller/" to "Thriller",
         //"/genres/mystery/" to "Mystery",
-        "/genres/crime/" to "Crime Dramas",
+        "/genres/crime/" to "Crime",
         "/genres/horror/" to "Horror",
         //"/genres/adventure/" to "Adventure",
         //"/genres/sci-fi/" to "Sci-Fi"
