@@ -78,6 +78,7 @@ class OnlyKdrama : MainAPI() {
     private data class TmdbMetadata(
         val tmdbId: Int,
         val mediaType: String,
+        val title: String?,
         val posterUrl: String?,
         val backdropUrl: String?,
         val logoUrl: String?,
@@ -98,6 +99,7 @@ class OnlyKdrama : MainAPI() {
     )
 
     private data class ParsedTitleInfo(
+        val cleanTitle: String,
         val searchQueries: List<String>,
         val normalizedPrimary: String,
         val yearHint: Int?,
@@ -361,6 +363,11 @@ class OnlyKdrama : MainAPI() {
             ?: ""
     }
 
+    private fun cleanCardTitle(rawTitle: String): String {
+        val parsed = parseOnlyKdramaTitle(rawTitle, null)
+        return parsed.cleanTitle.ifBlank { rawTitle.trim() }
+    }
+
     private fun parseHome(
         document: Document
     ): List<SearchResponse> {
@@ -369,15 +376,16 @@ class OnlyKdrama : MainAPI() {
 
         for (article in document.select("article.item")) {
             val url = getDramaUrl(article) ?: continue
-            val title = getDramaTitle(article)
+            val rawTitle = getDramaTitle(article)
 
-            if (title.isBlank() || !seen.add(url)) continue
+            if (rawTitle.isBlank() || !seen.add(url)) continue
 
+            val title = cleanCardTitle(rawTitle)
             val poster = getPoster(article)
             val isMovie = url.contains("/movies/") ||
                 article.hasClass("movies") ||
-                title.contains("movie", true) ||
-                title.contains("film", true)
+                rawTitle.contains("movie", true) ||
+                rawTitle.contains("film", true)
 
             val response = if (isMovie) {
                 newMovieSearchResponse(title, url, TvType.Movie) {
@@ -418,7 +426,7 @@ class OnlyKdrama : MainAPI() {
             if (!isMovie && !isDrama) continue
             if (!seen.add(url)) continue
 
-            val title = card.selectFirst(
+            val rawTitle = card.selectFirst(
                 ".details .title a"
             )?.text()?.trim()
                 ?.ifBlank { null }
@@ -427,6 +435,7 @@ class OnlyKdrama : MainAPI() {
                     ?.ifBlank { null }
                 ?: continue
 
+            val title = cleanCardTitle(rawTitle)
             val poster = getSearchPoster(card)
 
             val response = if (isMovie) {
@@ -695,6 +704,7 @@ class OnlyKdrama : MainAPI() {
         }
 
         return ParsedTitleInfo(
+            cleanTitle = cleaned,
             searchQueries = candidates.toList(),
             normalizedPrimary = normalizeForComparison(cleaned),
             yearHint = titleYear,
@@ -869,6 +879,12 @@ class OnlyKdrama : MainAPI() {
 
             val data = JSONObject(app.get(detailUrl, headers = tmdbHeaders).text)
 
+            val tmdbTitle = if (mediaType == "movie") {
+                data.optString("title")
+            } else {
+                data.optString("name")
+            }.trim().takeIf { it.isNotBlank() && it != "null" }
+
             val posterPath = data.optString("poster_path").takeIf {
                 it.isNotBlank() && it != "null"
             }
@@ -994,6 +1010,7 @@ class OnlyKdrama : MainAPI() {
             TmdbMetadata(
                 tmdbId = tmdbId,
                 mediaType = mediaType,
+                title = tmdbTitle,
                 posterUrl = posterPath?.let { "$tmdbImageBase/w780$it" },
                 backdropUrl = backdropPath?.let { "$tmdbImageBase/w1280$it" },
                 logoUrl = bestLogoPath?.let { "$tmdbImageBase/w500$it" },
@@ -1363,7 +1380,7 @@ class OnlyKdrama : MainAPI() {
     override suspend fun load(url: String): LoadResponse? {
         val document = getDocument(url)
 
-        val title = document.selectFirst(
+        val rawTitle = document.selectFirst(
             "#single .sheader .data h1"
         )?.text()
             ?.trim()
@@ -1378,9 +1395,11 @@ class OnlyKdrama : MainAPI() {
         val siteRating = getRating(document)
 
         val isMovie = url.contains("/movies/")
-        val parsedTitle = parseOnlyKdramaTitle(title, siteYear)
+        val parsedTitle = parseOnlyKdramaTitle(rawTitle, siteYear)
         val tmdb = fetchTmdbMetadata(parsedTitle, isMovie)
 
+        val finalTitle = tmdb?.title
+            ?: parsedTitle.cleanTitle.ifBlank { rawTitle }
         val finalPoster = tmdb?.posterUrl ?: sitePoster
         val finalBackdrop = tmdb?.backdropUrl ?: finalPoster
         val finalPlot = tmdb?.synopsis ?: sitePlot
@@ -1406,7 +1425,7 @@ class OnlyKdrama : MainAPI() {
             }
 
             return newMovieLoadResponse(
-                title,
+                finalTitle,
                 url,
                 TvType.Movie,
                 movieData
@@ -1461,7 +1480,7 @@ class OnlyKdrama : MainAPI() {
         }
 
         return newTvSeriesLoadResponse(
-            title,
+            finalTitle,
             url,
             TvType.TvSeries,
             episodes
