@@ -15,6 +15,8 @@ cloudstream {
 }
 
 android {
+    namespace = "com.onlykdrama"
+
     buildFeatures {
         buildConfig = true
         viewBinding = true
