@@ -603,43 +603,55 @@ class OnlyKdrama : MainAPI() {
             Regex("""\b(?:japanese|j-?drama|j-?movie)\b""").containsMatchIn(lower) -> "JP"
             Regex("""\b(?:thai|t-?drama|t-?movie)\b""").containsMatchIn(lower) -> "TH"
             Regex("""\b(?:taiwanese|tw-?drama)\b""").containsMatchIn(lower) -> "TW"
-            Regex("""\b(?:filipino|pinoy)\b""").containsMatchIn(lower) -> "PH"
+            Regex("""\b(?:filipino|pinoy|philippine)\b""").containsMatchIn(lower) -> "PH"
+            Regex("""\b(?:indonesian)\b""").containsMatchIn(lower) -> "ID"
+            Regex("""\b(?:vietnamese)\b""").containsMatchIn(lower) -> "VN"
+            Regex("""\b(?:malaysian)\b""").containsMatchIn(lower) -> "MY"
+            Regex("""\b(?:turkish)\b""").containsMatchIn(lower) -> "TR"
             else -> null
         }
 
-        val titleYear = Regex("""[\(\[\s]((?:19|20)\d{2})[\)\]\s]?""")
-            .find(rawTitle)
-            ?.groupValues
-            ?.getOrNull(1)
-            ?.toIntOrNull()
-            ?: pageYear
+        val hasExplicitSeason = Regex("""(?i)\b(?:season|part)\s*0*[2-9]\d*\b|\bS0*[2-9]\d*\b""")
+            .containsMatchIn(rawTitle)
+
+        val titleYear = if (hasExplicitSeason) {
+            null
+        } else {
+            Regex("""[\(\[\s]((?:19|20)\d{2})[\)\]\s]?""")
+                .find(rawTitle)
+                ?.groupValues
+                ?.getOrNull(1)
+                ?.toIntOrNull()
+                ?: pageYear
+        }
 
         val altBracketTitle = Regex("""\(([^()]{3,60})\)""")
             .findAll(rawTitle)
             .map { it.groupValues[1].trim() }
             .firstOrNull { inside ->
                 !Regex("""^(?:19|20)\d{2}$""").matches(inside) &&
-                    !Regex("""(?i)^(?:english|hindi|korean|chinese|japanese|thai|dubbed|subbed|dual audio|season \d+|s\d+|complete).*$""").matches(inside)
+                    !Regex("""(?i)^(?:english|hindi|korean|chinese|japanese|thai|indonesian|dubbed|subbed|dual audio|season \d+|s\d+|ep\.?\s*\d+|complete).*$""").matches(inside)
             }
 
         var cleaned = rawTitle
             .replace(Regex("""[\(\[]\s*(?:19|20)\d{2}\s*[\)\]]"""), " ")
             .replace(
-                Regex("""(?i)[\(\[]\s*(?:english|hindi|korean|chinese|japanese|thai|dual\s*audio|multi\s*audio|eng\s*sub|hindi\s*sub|dubbed|subbed|uncut|complete|full\s*movie|s\d+|season\s*\d+)[^)\]]*[\)\]]"""),
+                Regex("""(?i)[\(\[]\s*(?:english|hindi|korean|chinese|japanese|thai|indonesian|vietnamese|malaysian|turkish|dual\s*audio|multi\s*audio|eng\s*sub|hindi\s*sub|dubbed|subbed|uncut|complete|full\s*movie|s\d+|season\s*\d+|ep\.?\s*\d+)[^)\]]*[\)\]]"""),
                 " "
             )
             .replace(
-                Regex("""(?i)\b(?:english|hindi|urdu|tamil|telugu|dual\s*audio|multi\s*audio|eng\s*sub|hindi\s*sub|dubbed|subbed)\b"""),
+                Regex("""(?i)\b(?:season|part)\s*\d+\b|\bS0*\d+(?:\s*E0*\d+)?\b|\b(?:episodes?|eps?\.?)\s*\d+(?:\s*(?:-|to|&)\s*\d+)?(?:\s*(?:added|complete|end))?\b|\bE0*\d+\b"""),
                 " "
             )
             .replace(
-                Regex("""(?i)\b(?:korean|chinese|japanese|thai|taiwanese|filipino|pinoy|asian|k|c|j|t)?\s*-?\s*(?:drama|series|movie|film|web\s*series)\b"""),
+                Regex("""(?i)\b(?:english|hindi|urdu|tamil|telugu|dual\s*audio|multi\s*audio|eng\s*sub|hindi\s*sub|dubbed|subbed|in\s+hindi|in\s+english)\b"""),
                 " "
             )
             .replace(
-                Regex("""(?i)\b(?:season|part)\s*\d+\b|\bS0*\d+\b|\b(?:complete|all\s*episodes|episodes?\s*\d+(?:\s*-\s*\d+)?)\b"""),
+                Regex("""(?i)\b(?:korean|chinese|japanese|thai|taiwanese|filipino|pinoy|indonesian|vietnamese|malaysian|turkish|asian|k|c|j|t)?\s*-?\s*(?:drama|series|movie|film|web\s*series)\b"""),
                 " "
             )
+            .replace(Regex("""(?i)\b(?:complete|all\s*episodes|full\s*movie|uncut)\b"""), " ")
             .replace(Regex("""\b(?:19|20)\d{2}\b\s*$"""), " ")
             .replace(Regex("""[\|\-\–\—:/]+\s*$"""), " ")
             .replace(Regex("""\s+"""), " ")
@@ -735,9 +747,9 @@ class OnlyKdrama : MainAPI() {
         if (parsed.yearHint != null && itemYear != null) {
             val diff = kotlin.math.abs(parsed.yearHint - itemYear)
             score += when {
-                diff == 0 -> 60.0
+                diff == 0 -> 55.0
                 diff == 1 -> 25.0
-                diff >= 3 -> -35.0
+                diff >= 4 -> -25.0
                 else -> 0.0
             }
         }
@@ -750,12 +762,19 @@ class OnlyKdrama : MainAPI() {
             }
         }
         val origLang = item.optString("original_language").lowercase(Locale.ROOT)
-        if (origLang == "ko") origins.add("KR")
-        if (origLang == "zh") origins.add("CN")
-        if (origLang == "ja") origins.add("JP")
-        if (origLang == "th") origins.add("TH")
+        when (origLang) {
+            "ko" -> origins.add("KR")
+            "zh" -> origins.add("CN")
+            "ja" -> origins.add("JP")
+            "th" -> origins.add("TH")
+            "id" -> origins.add("ID")
+            "vi" -> origins.add("VN")
+            "ms" -> origins.add("MY")
+            "tl" -> origins.add("PH")
+            "tr" -> origins.add("TR")
+        }
 
-        val asianCountries = setOf("KR", "CN", "JP", "TH", "TW", "PH", "HK")
+        val asianCountries = setOf("KR", "CN", "JP", "TH", "TW", "PH", "HK", "ID", "VN", "MY")
 
         if (parsed.originCountryHint != null) {
             if (origins.contains(parsed.originCountryHint)) {
@@ -788,24 +807,15 @@ class OnlyKdrama : MainAPI() {
             val encoded = URLEncoder.encode(query, "UTF-8")
 
             for (mediaType in listOf(primaryType, fallbackType)) {
-                val searchUrl = buildString {
-                    append("$tmdbApiUrl/search/$mediaType?query=$encoded")
-                    append("&include_adult=false&language=en-US&page=1")
-                    if (parsed.yearHint != null) {
-                        if (mediaType == "movie") {
-                            append("&year=${parsed.yearHint}")
-                        } else {
-                            append("&first_air_date_year=${parsed.yearHint}")
-                        }
-                    }
-                }
+                val searchUrl =
+                    "$tmdbApiUrl/search/$mediaType?query=$encoded&include_adult=false&language=en-US&page=1"
 
                 val json = runCatching {
                     JSONObject(app.get(searchUrl, headers = tmdbHeaders).text)
                 }.getOrNull() ?: continue
 
                 val results = json.optJSONArray("results") ?: continue
-                for (i in 0 until minOf(results.length(), 10)) {
+                for (i in 0 until minOf(results.length(), 15)) {
                     val item = results.optJSONObject(i) ?: continue
                     val id = item.optInt("id", 0)
                     if (id <= 0) continue
@@ -820,32 +830,8 @@ class OnlyKdrama : MainAPI() {
                     }
                 }
 
-                if (bestId != null && bestType == primaryType && bestScore >= 145.0) {
+                if (bestId != null && bestType == primaryType && bestScore >= 135.0) {
                     return bestId to bestType
-                }
-            }
-
-            if (bestId == null && parsed.yearHint != null) {
-                val noYearUrl =
-                    "$tmdbApiUrl/search/$primaryType?query=$encoded&include_adult=false&language=en-US&page=1"
-                val json = runCatching {
-                    JSONObject(app.get(noYearUrl, headers = tmdbHeaders).text)
-                }.getOrNull()
-
-                val results = json?.optJSONArray("results")
-                if (results != null) {
-                    for (i in 0 until minOf(results.length(), 10)) {
-                        val item = results.optJSONObject(i) ?: continue
-                        val id = item.optInt("id", 0)
-                        if (id <= 0) continue
-
-                        val candidateScore = scoreTmdbCandidate(item, primaryType, parsed)
-                        if (candidateScore > bestScore) {
-                            bestScore = candidateScore
-                            bestId = id
-                            bestType = primaryType
-                        }
-                    }
                 }
             }
         }
@@ -1345,7 +1331,6 @@ class OnlyKdrama : MainAPI() {
         val finalActors = tmdb?.cast?.map { member ->
             Actor(member.name, member.image) to member.role
         }.orEmpty()
-        
 
         if (isMovie) {
             val movieData = parseMovieLinks(document)
