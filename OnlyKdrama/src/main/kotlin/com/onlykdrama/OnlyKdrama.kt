@@ -195,15 +195,14 @@ class OnlyKdrama : MainAPI() {
     private fun parseBestSrcsetUrl(srcset: String): String? {
         if (srcset.isBlank()) return null
 
-        return srcset
-            .split(Regex("""(?<=\s\d+(?:\.\d+)?[wx]),\s*"""))
-            .mapNotNull { entry ->
-                val parts = entry.trim().split(Regex("""\s+"""))
-                val rawUrl = parts.firstOrNull()?.takeIf {
+        return Regex("""([^\s,]+)\s+(\d+(?:\.\d+)?[wx])""", RegexOption.IGNORE_CASE)
+            .findAll(srcset)
+            .mapNotNull { match ->
+                val rawUrl = match.groupValues[1].takeIf {
                     it.isNotBlank() && !it.startsWith("data:")
                 } ?: return@mapNotNull null
 
-                val descriptor = parts.getOrNull(1).orEmpty().lowercase()
+                val descriptor = match.groupValues[2].lowercase()
                 val score = when {
                     descriptor.endsWith("w") ->
                         descriptor.removeSuffix("w").toFloatOrNull() ?: 0f
