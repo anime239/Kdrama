@@ -51,22 +51,23 @@ class OnlyKdrama : MainAPI() {
     )
 
     private val requestSemaphore = Semaphore(2)
-
+    private fun pickTitle(vararg options: String): String = options.random()
+    
     override val mainPage = mainPageOf(
-        "" to "New Releases",
-        "/drama/" to "TV Shows",
-        "/movies/" to "Movies",
-        "/genres/ongoing/" to "Ongoing",
-        "/genres/action/" to "Action",
-        "/genres/romance/" to "Romance",
-        "/genres/youth/" to "Youth",
-        "/genres/comedy/" to "Comedy",
-        "/genres/thriller/" to "Thriller",
-        "/genres/mystery/" to "Mystery",
-        "/genres/crime/" to "Crime",
-        "/genres/horror/" to "Horror",
-        "/genres/adventure/" to "Adventure",
-        "/genres/sci-fi/" to "Sci-Fi"
+        "" to pickTitle("Fresh Drops", "Just Landed", "Cozy Newbies"),
+        "/drama/" to pickTitle("Comfort Dramas", "Binge Series", "K-Drama Picks"),
+        "/movies/" to pickTitle("Movie Night", "Cozy Cinema", "K-Movies"),
+        //"/genres/ongoing/" to pickTitle("On Air", "Weekly Drops", "Airing Now"),
+        "/genres/romance/" to pickTitle("Soft Romance", "Heart Flutters", "Butterflies"),
+        "/genres/comedy/" to pickTitle("Warm & Funny", "Cozy Romcoms", "Pure Comfort"),
+        "/genres/action/" to pickTitle("K-Action", "Action"),
+        //"/genres/youth/" to pickTitle("Youth Days", "Campus Vibe", "First Love"),
+        "/genres/thriller/" to pickTitle("Late-Night Suspense", "Dark Twists", "Edge of Seat"),
+        //"/genres/mystery/" to pickTitle("Hidden Clues", "Secret Files", "Deep Mystery"),
+        "/genres/crime/" to pickTitle("Crime", "K-Crime", "Noir Nights"),
+        "/genres/horror/" to pickTitle("Midnight Chills", "Spooky Nights", "Eerie Tales"),
+        //"/genres/adventure/" to pickTitle("Dreamy Worlds", "Epic Escapes", "Wanderlust"),
+        //"/genres/sci-fi/" to pickTitle("Time Slips", "Fantasy & Fate", "Beyond Time")
     )
 
     private data class TmdbCastMember(
