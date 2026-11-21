@@ -1343,11 +1343,9 @@ class OnlyKdrama : MainAPI() {
         val finalScore = tmdb?.rating?.let { Score.from10(it) }
             ?: siteRating?.let { Score.from10(it) }
         val finalActors = tmdb?.cast?.map { member ->
-            ActorData(
-                Actor(member.name, member.image),
-                roleString = member.role
-            )
+            Actor(member.name, member.image) to member.role
         }.orEmpty()
+        
 
         if (isMovie) {
             val movieData = parseMovieLinks(document)
